@@ -6,11 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "prebuild:vendor": "tsx scripts/prebuild-deps.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-sql": "^2.4.0",
     "esbuild-wasm": "^0.28.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -19,6 +25,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
+    "@tauri-apps/cli": "^2.10.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
