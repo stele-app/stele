@@ -16,7 +16,7 @@ let initPromise: Promise<void> | null = null;
 async function ensureInit() {
   if (!initPromise) {
     initPromise = initialize({
-      wasmURL: '/esbuild.wasm',
+      wasmURL: './esbuild.wasm',
       worker: true,
     });
   }

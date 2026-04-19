@@ -1,15 +1,18 @@
 /**
  * Artifact metadata store.
  *
- * In-memory for now. When running inside Tauri, this swaps to SQLite
- * via @tauri-apps/plugin-sql. The interface stays the same.
+ * Uses SQLite via @tauri-apps/plugin-sql when running inside Tauri.
+ * Falls back to in-memory storage for browser-only dev mode.
+ * The external API (subscribe, getArtifacts, etc.) stays the same.
  */
+
+import { getDb } from './db';
 
 export interface Artifact {
   id: string;
   title: string;
   kind: 'jsx' | 'tsx' | 'html' | 'svg' | 'md' | 'mermaid';
-  source: string;          // Raw source code (kept in memory for now)
+  source: string;
   originalName: string;
   importedAt: number;
   lastOpenedAt: number | null;
@@ -19,8 +22,12 @@ export interface Artifact {
   tags: string[];
 }
 
-// In-memory store
-let artifacts: Artifact[] = [];
+// ── In-memory fallback ──────────────────────────────────────────────
+
+let memArtifacts: Artifact[] = [];
+
+// ── Reactive subscriptions ──────────────────────────────────────────
+
 let listeners: Array<() => void> = [];
 
 function notify() {
@@ -34,9 +41,42 @@ export function subscribe(fn: () => void): () => void {
   };
 }
 
-export function getArtifacts(): Artifact[] {
-  return [...artifacts].sort((a, b) => {
-    // Pinned first, then by last opened / imported
+// ── SQLite row ↔ Artifact mapping ───────────────────────────────────
+
+interface ArtifactRow {
+  id: string;
+  title: string;
+  kind: string;
+  source_path: string;   // We store actual source here (column name is legacy)
+  original_name: string;
+  imported_at: number;
+  last_opened_at: number | null;
+  open_count: number;
+  pinned: number;         // SQLite boolean
+  size_bytes: number;
+  tags: string | null;    // JSON array or null
+}
+
+function rowToArtifact(row: ArtifactRow): Artifact {
+  return {
+    id: row.id,
+    title: row.title,
+    kind: row.kind as Artifact['kind'],
+    source: row.source_path,
+    originalName: row.original_name,
+    importedAt: row.imported_at,
+    lastOpenedAt: row.last_opened_at,
+    openCount: row.open_count,
+    pinned: row.pinned === 1,
+    sizeBytes: row.size_bytes,
+    tags: row.tags ? JSON.parse(row.tags) : [],
+  };
+}
+
+// ── Sort helper ─────────────────────────────────────────────────────
+
+function sortArtifacts(list: Artifact[]): Artifact[] {
+  return [...list].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     const aTime = a.lastOpenedAt ?? a.importedAt;
     const bTime = b.lastOpenedAt ?? b.importedAt;
@@ -44,8 +84,49 @@ export function getArtifacts(): Artifact[] {
   });
 }
 
+// ── Initialization ──────────────────────────────────────────────────
+
+let dbReady = false;
+let initPromise: Promise<void> | null = null;
+
+/**
+ * Ensure the DB is loaded and in-memory cache is populated.
+ * Safe to call multiple times — only runs once.
+ */
+async function ensureInit(): Promise<boolean> {
+  if (dbReady) return true;
+  if (initPromise) {
+    await initPromise;
+    return dbReady;
+  }
+
+  initPromise = (async () => {
+    const db = await getDb();
+    if (!db) return;
+
+    const rows = await db.select<ArtifactRow[]>(
+      'SELECT * FROM artifacts ORDER BY pinned DESC, last_opened_at DESC'
+    );
+    memArtifacts = rows.map(rowToArtifact);
+    dbReady = true;
+    notify();
+  })();
+
+  await initPromise;
+  return dbReady;
+}
+
+// Kick off init immediately on module load
+ensureInit();
+
+// ── Public API ──────────────────────────────────────────────────────
+
+export function getArtifacts(): Artifact[] {
+  return sortArtifacts(memArtifacts);
+}
+
 export function getArtifact(id: string): Artifact | undefined {
-  return artifacts.find(a => a.id === id);
+  return memArtifacts.find(a => a.id === id);
 }
 
 export async function hashContent(content: string): Promise<string> {
@@ -60,13 +141,22 @@ export async function importArtifact(
   source: string,
   filename: string
 ): Promise<Artifact> {
+  await ensureInit();
   const id = await hashContent(source);
 
   // Check for duplicates
-  const existing = artifacts.find(a => a.id === id);
+  const existing = memArtifacts.find(a => a.id === id);
   if (existing) {
     existing.lastOpenedAt = Date.now();
     existing.openCount++;
+    // Persist update
+    const db = await getDb();
+    if (db) {
+      await db.execute(
+        'UPDATE artifacts SET last_opened_at = $1, open_count = $2 WHERE id = $3',
+        [existing.lastOpenedAt, existing.openCount, existing.id]
+      );
+    }
     notify();
     return existing;
   }
@@ -74,50 +164,89 @@ export async function importArtifact(
   const ext = filename.split('.').pop()?.toLowerCase() || 'jsx';
   const kind = (['jsx', 'tsx', 'html', 'svg', 'md', 'mermaid'].includes(ext) ? ext : 'jsx') as Artifact['kind'];
 
-  // Derive a title from the filename
   const title = filename
-    .replace(/\.[^.]+$/, '')                    // Remove extension
-    .replace(/[-_]/g, ' ')                      // Replace separators
-    .replace(/([a-z])([A-Z])/g, '$1 $2')        // Split camelCase
-    .replace(/\b\w/g, c => c.toUpperCase());     // Title case
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_]/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, c => c.toUpperCase());
 
+  const now = Date.now();
   const artifact: Artifact = {
     id,
     title,
     kind,
     source,
     originalName: filename,
-    importedAt: Date.now(),
-    lastOpenedAt: Date.now(),
+    importedAt: now,
+    lastOpenedAt: now,
     openCount: 1,
     pinned: false,
     sizeBytes: new TextEncoder().encode(source).length,
     tags: [],
   };
 
-  artifacts.push(artifact);
+  // Persist
+  const db = await getDb();
+  if (db) {
+    await db.execute(
+      `INSERT INTO artifacts (id, title, kind, source_path, original_name, imported_at, last_opened_at, open_count, pinned, size_bytes, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        artifact.id, artifact.title, artifact.kind, artifact.source,
+        artifact.originalName, artifact.importedAt, artifact.lastOpenedAt,
+        artifact.openCount, 0, artifact.sizeBytes, JSON.stringify(artifact.tags),
+      ]
+    );
+  }
+
+  memArtifacts.push(artifact);
   notify();
   return artifact;
 }
 
 export function markOpened(id: string) {
-  const a = artifacts.find(a => a.id === id);
-  if (a) {
-    a.lastOpenedAt = Date.now();
-    a.openCount++;
-    notify();
-  }
+  const a = memArtifacts.find(a => a.id === id);
+  if (!a) return;
+
+  a.lastOpenedAt = Date.now();
+  a.openCount++;
+  notify();
+
+  // Persist in background
+  getDb().then(db => {
+    if (db) {
+      db.execute(
+        'UPDATE artifacts SET last_opened_at = $1, open_count = $2 WHERE id = $3',
+        [a.lastOpenedAt, a.openCount, a.id]
+      );
+    }
+  });
 }
 
 export function togglePin(id: string) {
-  const a = artifacts.find(a => a.id === id);
-  if (a) {
-    a.pinned = !a.pinned;
-    notify();
-  }
+  const a = memArtifacts.find(a => a.id === id);
+  if (!a) return;
+
+  a.pinned = !a.pinned;
+  notify();
+
+  getDb().then(db => {
+    if (db) {
+      db.execute(
+        'UPDATE artifacts SET pinned = $1 WHERE id = $2',
+        [a.pinned ? 1 : 0, a.id]
+      );
+    }
+  });
 }
 
 export function deleteArtifact(id: string) {
-  artifacts = artifacts.filter(a => a.id !== id);
+  memArtifacts = memArtifacts.filter(a => a.id !== id);
   notify();
+
+  getDb().then(db => {
+    if (db) {
+      db.execute('DELETE FROM artifacts WHERE id = $1', [id]);
+    }
+  });
 }

@@ -33,7 +33,7 @@ export async function loadVendorScripts(): Promise<string> {
   const scripts: string[] = [];
   for (const file of vendorFiles) {
     try {
-      const resp = await fetch(`/vendor/${file}`);
+      const resp = await fetch(`./vendor/${file}`);
       if (resp.ok) {
         const code = await resp.text();
         scripts.push(`<script>/* ${file} */${code}</script>`);
