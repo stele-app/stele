@@ -1,6 +1,8 @@
 import { HashRouter, Routes, Route } from 'react-router-dom';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import Sidebar from './components/Sidebar';
 import DropZone from './components/DropZone';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -15,6 +17,23 @@ function AppShell() {
   const handleFileDrop = useCallback(async (source: string, filename: string) => {
     const artifact = await importArtifact(source, filename);
     navigate(`/view/${artifact.id}`);
+  }, [navigate]);
+
+  // Handle file opened via OS file association
+  useEffect(() => {
+    const unlisten = listen<string>('open-file', async (event) => {
+      const filePath = event.payload;
+      try {
+        const filename = filePath.split(/[\\/]/).pop() || 'artifact.jsx';
+        const source = await invoke<string>('read_file', { path: filePath });
+        const artifact = await importArtifact(source, filename);
+        navigate(`/view/${artifact.id}`);
+      } catch (err) {
+        console.error('[open-file] Error importing file:', err);
+      }
+    });
+
+    return () => { unlisten.then(fn => fn()); };
   }, [navigate]);
 
   return (
