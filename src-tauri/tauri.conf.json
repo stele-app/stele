@@ -48,9 +48,7 @@
   },
   "plugins": {
     "sql": {
-      "preload": {
-        "db": "sqlite:atelier.db"
-      }
+      "preload": ["sqlite:atelier.db"]
     }
   }
 }

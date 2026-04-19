@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   // Serve vendor/ UMD bundles as static assets during dev
   publicDir: 'public',
