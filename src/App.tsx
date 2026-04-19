@@ -10,6 +10,7 @@ import Library from './routes/Library';
 import Viewer from './routes/Viewer';
 import Settings from './routes/Settings';
 import { importArtifact } from './lib/artifact-store';
+import { initWatcher } from './lib/watcher';
 
 function AppShell() {
   const navigate = useNavigate();
@@ -18,6 +19,9 @@ function AppShell() {
     const artifact = await importArtifact(source, filename);
     navigate(`/view/${artifact.id}`);
   }, [navigate]);
+
+  // Initialize watched folders
+  useEffect(() => { initWatcher(); }, []);
 
   // Handle file opened via OS file association
   useEffect(() => {

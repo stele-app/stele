@@ -40,6 +40,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // Second instance launched — extract file arg and emit to existing window
             if let Some(path) = file_arg_from_args(args.into_iter().map(|s| s.to_string())) {

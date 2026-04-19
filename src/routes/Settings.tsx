@@ -1,10 +1,20 @@
 import { useState, useEffect } from 'react';
+import { open as dialogOpen } from '@tauri-apps/plugin-dialog';
 import { getArtifacts, subscribe } from '../lib/artifact-store';
+import {
+  getWatchedFolders,
+  addWatchedFolder,
+  removeWatchedFolder,
+  toggleWatchedFolder,
+  subscribeWatcher,
+} from '../lib/watcher';
 
 export default function Settings() {
   const [artifacts, setArtifacts] = useState(getArtifacts());
+  const [watchedFolders, setWatchedFolders] = useState(getWatchedFolders());
 
   useEffect(() => subscribe(() => setArtifacts(getArtifacts())), []);
+  useEffect(() => subscribeWatcher(() => setWatchedFolders(getWatchedFolders())), []);
 
   const totalSize = artifacts.reduce((sum, a) => sum + a.sizeBytes, 0);
   const kindCounts = artifacts.reduce((acc, a) => {
@@ -18,7 +28,22 @@ export default function Settings() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  async function handleAddFolder() {
+    try {
+      const selected = await dialogOpen({
+        directory: true,
+        multiple: false,
+        title: 'Select folder to watch for artifacts',
+      });
+      if (selected && typeof selected === 'string') {
+        await addWatchedFolder(selected);
+      }
+    } catch (err) {
+      console.error('[settings] Failed to add watched folder:', err);
+    }
+  }
+
+  const Section = ({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) => (
     <div style={{
       background: '#1e293b',
       borderRadius: '12px',
@@ -26,9 +51,12 @@ export default function Settings() {
       border: '1px solid #334155',
       marginBottom: '16px',
     }}>
-      <h2 style={{ margin: '0 0 16px', fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>
-        {title}
-      </h2>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+        <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0', flex: 1 }}>
+          {title}
+        </h2>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -60,6 +88,100 @@ export default function Settings() {
         ))}
       </Section>
 
+      <Section
+        title="Watched Folders"
+        action={
+          <button
+            onClick={handleAddFolder}
+            style={{
+              padding: '4px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              background: '#3b82f6',
+              color: 'white',
+              fontSize: '12px',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            + Add Folder
+          </button>
+        }
+      >
+        {watchedFolders.length === 0 ? (
+          <div style={{ color: '#475569', fontSize: '13px' }}>
+            No watched folders. Add a folder to auto-import new artifact files.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {watchedFolders.map(folder => (
+              <div key={folder.path} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                background: '#0f172a',
+                border: '1px solid #334155',
+              }}>
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: folder.enabled ? '#22c55e' : '#475569',
+                  flexShrink: 0,
+                }} />
+                <div style={{
+                  flex: 1,
+                  fontSize: '13px',
+                  color: '#e2e8f0',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  direction: 'rtl',
+                  textAlign: 'left',
+                }}>
+                  {folder.path}
+                </div>
+                <button
+                  onClick={() => toggleWatchedFolder(folder.path)}
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    border: '1px solid #334155',
+                    background: 'transparent',
+                    color: '#94a3b8',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  {folder.enabled ? 'Pause' : 'Resume'}
+                </button>
+                <button
+                  onClick={() => removeWatchedFolder(folder.path)}
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    border: '1px solid #334155',
+                    background: 'transparent',
+                    color: '#ef4444',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: '10px', fontSize: '12px', color: '#475569' }}>
+          New .jsx, .tsx, .html, .svg, .md, and .mermaid files are auto-imported.
+        </div>
+      </Section>
+
       <Section title="File Associations">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {['jsx', 'tsx', 'html', 'svg', 'md', 'mermaid'].map(ext => (
@@ -77,14 +199,6 @@ export default function Settings() {
         </div>
         <div style={{ marginTop: '8px', fontSize: '12px', color: '#475569' }}>
           File associations are registered when installing via the NSIS or MSI installer.
-        </div>
-      </Section>
-
-      <Section title="Keyboard Shortcuts">
-        <div style={{ fontSize: '13px', color: '#94a3b8', lineHeight: 2 }}>
-          <div><kbd style={kbdStyle}>Drag & Drop</kbd> Import artifact file</div>
-          <div><kbd style={kbdStyle}>+ Import</kbd> File picker in Library</div>
-          <div><kbd style={kbdStyle}>Stop</kbd> Kill runaway artifact</div>
         </div>
       </Section>
 
@@ -111,17 +225,3 @@ export default function Settings() {
     </div>
   );
 }
-
-const kbdStyle: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '2px 8px',
-  borderRadius: '4px',
-  background: '#0f172a',
-  border: '1px solid #334155',
-  fontSize: '12px',
-  fontFamily: 'monospace',
-  color: '#e2e8f0',
-  marginRight: '8px',
-  minWidth: '80px',
-  textAlign: 'center',
-};
