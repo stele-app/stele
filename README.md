@@ -1,73 +1,46 @@
-# React + TypeScript + Vite
+# Atelier
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Desktop viewer for Claude artifacts. Open JSX, TSX, HTML, SVG, Markdown, and Mermaid files in a sandboxed environment with live rendering.
 
-Currently, two official plugins are available:
+## Download
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Go to [Releases](../../releases) and download the installer for your platform:
 
-## React Compiler
+- **Windows:** `.msi` or `-setup.exe`
+- **macOS:** `.dmg`
+- **Linux:** `.deb` or `.AppImage`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Features
 
-## Expanding the ESLint configuration
+- **Sandboxed rendering** — artifacts run in an isolated iframe with no access to your system
+- **15 vendor libraries** built in — React, Recharts, D3, Three.js, Chart.js, Plotly, Mermaid, and more
+- **File associations** — right-click `.jsx`/`.tsx` files and open directly in Atelier
+- **Single instance** — opening a file while the app is running loads it in the existing window
+- **SQLite persistence** — your artifact library persists across sessions
+- **Export to HTML** — export any artifact as a standalone HTML file
+- **Drag and drop** — drop files onto the window to import
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Build from source
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+git clone https://github.com/Trevo88423/Atelier.git
+cd Atelier
+pnpm install
+cd vendor-src && pnpm install && cd ..
+pnpm prebuild:vendor
+pnpm tauri build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Requires: Node.js 22+, pnpm 10+, Rust toolchain, and platform-specific Tauri dependencies ([see Tauri docs](https://v2.tauri.app/start/prerequisites/)).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Development
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm tauri dev
 ```
+
+## Tech stack
+
+- **Frontend:** React 19, TypeScript, Vite
+- **Backend:** Tauri 2, Rust, SQLite
+- **Sandbox:** esbuild-wasm for JSX/TSX compilation, vendor UMD bundles
