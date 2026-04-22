@@ -99,7 +99,7 @@ export default function Sidebar() {
         color: '#475569',
         textAlign: 'center',
       }}>
-        v0.2.0
+        v0.2.1
       </div>
     </aside>
   );

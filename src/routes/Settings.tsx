@@ -293,7 +293,7 @@ export default function Settings() {
 
       <Section title="About">
         <div style={{ fontSize: '14px', color: '#94a3b8', lineHeight: 1.8 }}>
-          <div><strong style={{ color: '#e2e8f0' }}>Stele</strong> v0.2.0</div>
+          <div><strong style={{ color: '#e2e8f0' }}>Stele</strong> v0.2.1</div>
           <div>VLC for JSX — the desktop runtime for interactive artifacts.</div>
           <div style={{ marginTop: '12px', fontSize: '13px' }}>
             <div>Tauri 2 + React 19 + esbuild-wasm</div>

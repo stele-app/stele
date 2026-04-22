@@ -119,7 +119,7 @@ export default function JsxViewer({
   return (
     <iframe
       ref={iframeRef}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-downloads"
       allow={iframeAllow || undefined}
       srcDoc={sandboxDoc}
       style={{ width: '100%', height: '100%', border: 'none', background: 'white' }}
