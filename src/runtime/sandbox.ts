@@ -7,7 +7,7 @@
  * Contents:
  * - Tailwind Play CDN script (JIT CSS generation)
  * - Vendor UMD scripts (React, ReactDOM, etc.) assigned to window globals
- * - Boot script (storage shim, link interception, postMessage bridge)
+ * - Boot script (storage shim, link interception, MessageChannel RPC bridge)
  * - Transformed artifact code with mount logic
  */
 
@@ -105,22 +105,41 @@ async function loadVendorFiles(files: string[]): Promise<string> {
 
 /**
  * The boot script that runs inside the sandbox iframe.
- * Sets up:
- * - window.storage shim (postMessage RPC to host)
- * - External link interception (opens in OS browser)
- * - postMessage listener for RPC responses
+ *
+ * RPC uses a MessageChannel: port1 is transferred to the host at init,
+ * port2 stays in this IIFE closure. The closure is the only holder of port2,
+ * so artifact code cannot forge RPC calls or intercept responses.
+ *
+ * Status messages (`ready` / `mounted` / `error`) stay on the window channel
+ * because they're advisory UI state, not capability-granting.
  */
 const BOOT_SCRIPT = `
 (function() {
   var HOST = window.parent;
+  var channel = new MessageChannel();
+  var port = channel.port2;
   var pending = new Map();
   var rpcId = 0;
+
+  // RPC responses arrive here — forgeable window-level messages are ignored.
+  port.onmessage = function(ev) {
+    var msg = ev.data;
+    if (!msg || msg.kind !== 'rpc-result') return;
+    var p = pending.get(msg.id);
+    if (!p) return;
+    pending.delete(msg.id);
+    if (msg.error) { p.reject(new Error(msg.error)); }
+    else { p.resolve(msg.result); }
+  };
+
+  // Hand port1 to host. All subsequent RPC flows over this channel.
+  HOST.postMessage({ kind: 'init' }, '*', [channel.port1]);
 
   function rpc(method, params) {
     return new Promise(function(resolve, reject) {
       var id = ++rpcId;
       pending.set(id, { resolve: resolve, reject: reject });
-      HOST.postMessage({ kind: 'rpc', id: id, method: method, params: params }, '*');
+      port.postMessage({ kind: 'rpc', id: id, method: method, params: params });
     });
   }
 
@@ -143,19 +162,7 @@ const BOOT_SCRIPT = `
     }
   });
 
-  // Listen for RPC responses from the host
-  window.addEventListener('message', function(ev) {
-    var msg = ev.data;
-    if (msg && msg.kind === 'rpc-result') {
-      var p = pending.get(msg.id);
-      if (!p) return;
-      pending.delete(msg.id);
-      if (msg.error) { p.reject(new Error(msg.error)); }
-      else { p.resolve(msg.result); }
-    }
-  });
-
-  // Signal readiness to host
+  // Advisory status signal — window channel is fine.
   HOST.postMessage({ kind: 'ready' }, '*');
 })();
 `;

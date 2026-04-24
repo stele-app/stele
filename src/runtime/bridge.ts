@@ -1,7 +1,13 @@
 /**
- * Host-side postMessage bridge.
+ * Host-side bridge.
  *
- * Listens for RPC calls from the sandbox iframe and dispatches them.
+ * RPC flows over a MessagePort transferred from the sandbox at init time.
+ * The port is unforgeable from within the iframe — anything posted via
+ * `window.parent.postMessage` after init is silently dropped on the RPC path.
+ *
+ * Status messages (`ready` / `mounted` / `error`) stay on the window channel
+ * because they're advisory UI state, not capability-granting.
+ *
  * Storage is backed by SQLite via @tauri-apps/plugin-sql when available,
  * with an in-memory Map fallback for browser dev mode.
  */
@@ -106,34 +112,14 @@ export function attachBridge(
   artifactId: string,
   callbacks: BridgeCallbacks
 ): () => void {
-  const handler = async (ev: MessageEvent) => {
-    if (ev.source !== iframe.contentWindow) return;
-    const msg = ev.data;
-    if (!msg || typeof msg.kind !== 'string') return;
+  let port: MessagePort | null = null;
 
-    // Status messages from sandbox
-    if (msg.kind === 'ready') {
-      callbacks.onStatusChange('ready');
-      return;
-    }
-    if (msg.kind === 'mounted') {
-      callbacks.onStatusChange('mounted');
-      return;
-    }
-    if (msg.kind === 'error') {
-      callbacks.onStatusChange('error');
-      callbacks.onError(msg.message || 'Unknown error');
-      return;
-    }
-
-    // RPC calls from sandbox
-    if (msg.kind !== 'rpc') return;
+  const portHandler = async (pev: MessageEvent) => {
+    const msg = pev.data;
+    if (!port || !msg || msg.kind !== 'rpc' || typeof msg.method !== 'string') return;
 
     const reply = (result: unknown, error?: string) => {
-      iframe.contentWindow?.postMessage(
-        { kind: 'rpc-result', id: msg.id, result, error },
-        '*'
-      );
+      port?.postMessage({ kind: 'rpc-result', id: msg.id, result, error });
     };
 
     try {
@@ -181,6 +167,34 @@ export function attachBridge(
     }
   };
 
-  window.addEventListener('message', handler);
-  return () => window.removeEventListener('message', handler);
+  const windowHandler = (ev: MessageEvent) => {
+    if (ev.source !== iframe.contentWindow) return;
+    const msg = ev.data;
+    if (!msg || typeof msg.kind !== 'string') return;
+
+    // One-time port handshake. Transferred port is the sole RPC channel.
+    if (msg.kind === 'init' && !port && ev.ports.length > 0) {
+      port = ev.ports[0];
+      port.onmessage = portHandler;
+      return;
+    }
+
+    // Advisory status messages — not privilege-granting, so window channel is fine.
+    if (msg.kind === 'ready')   { callbacks.onStatusChange('ready'); return; }
+    if (msg.kind === 'mounted') { callbacks.onStatusChange('mounted'); return; }
+    if (msg.kind === 'error')   {
+      callbacks.onStatusChange('error');
+      callbacks.onError(msg.message || 'Unknown error');
+      return;
+    }
+
+    // Anything else (including forged RPC on the window channel) is dropped.
+  };
+
+  window.addEventListener('message', windowHandler);
+  return () => {
+    window.removeEventListener('message', windowHandler);
+    port?.close();
+    port = null;
+  };
 }
