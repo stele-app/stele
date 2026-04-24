@@ -4,7 +4,7 @@ import { getArtifact, markOpened, updateTags, updateTitle, subscribe } from '../
 import { exportAsHtml, downloadHtml } from '../lib/export-html';
 import ViewerDispatch from '../viewers';
 import type { BridgeStatus } from '../runtime/bridge';
-import { parseManifest, capabilityId, type Manifest, type Capability } from '../runtime/manifest';
+import { parseManifest, capabilityId, type Manifest, type Capability, type Archetype } from '../runtime/manifest';
 import { getGranted, grantAll } from '../lib/permissions';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -226,6 +226,7 @@ export default function Viewer() {
         }}>
           .{artifact.kind}
         </span>
+        {manifest && <ArchetypeBadge manifest={manifest} />}
         {/* Tags */}
         {artifact.tags.map(tag => (
           <span
@@ -464,4 +465,72 @@ export default function Viewer() {
       </div>
     </div>
   );
+}
+
+/**
+ * Transparency indicator for the artifact's runtime archetype.
+ * Shows inline in the viewer header so the user always knows whether
+ * the artifact runs offline, needs a server, or is paired.
+ */
+function ArchetypeBadge({ manifest }: { manifest: Manifest }) {
+  const theme = ARCHETYPE_THEME[manifest.archetype];
+  const label =
+    manifest.archetype === 'client-view' && manifest.server
+      ? `client view · ${hostOf(manifest.server)}`
+      : theme.label;
+  const tooltip =
+    manifest.archetype === 'client-view' && manifest.server
+      ? `View of data on ${manifest.server}. Needs server connection.`
+      : theme.tooltip;
+
+  return (
+    <span
+      title={tooltip}
+      style={{
+        fontSize: '11px',
+        padding: '2px 6px',
+        borderRadius: '4px',
+        background: theme.background,
+        color: theme.color,
+        border: `1px solid ${theme.border}`,
+        fontWeight: 500,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; color: string; border: string; tooltip: string }> = {
+  'self-contained': {
+    label: 'self-contained',
+    background: '#0f2a1f',
+    color: '#86efac',
+    border: '#14532d',
+    tooltip: 'Runs offline. No server dependency.',
+  },
+  'client-view': {
+    label: 'client view',
+    background: '#0f1e3a',
+    color: '#93c5fd',
+    border: '#1e3a8a',
+    tooltip: 'View of data on a remote server. Needs connection.',
+  },
+  'paired': {
+    label: 'paired',
+    background: '#1f0f3a',
+    color: '#c4b5fd',
+    border: '#4c1d95',
+    tooltip: 'Linked to a partner artifact. Both are required.',
+  },
+};
+
+/** Strip protocol and path from a URL, showing only the host. Falls back to the raw string on parse failure. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
