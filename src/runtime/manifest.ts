@@ -10,6 +10,7 @@
  *    * version: 1.0.0
  *    * author: TPB Kitchens
  *    * description: Daily site safety check
+ *    * archetype: self-contained
  *    * requires:
  *    *   - geolocation
  *    *   - camera
@@ -32,11 +33,30 @@ export type Capability =
   | { kind: 'clipboard-write' }
   | { kind: 'network'; origin: string };
 
+/**
+ * An artifact's runtime archetype:
+ * - 'self-contained' — runs offline, no server dependency (default)
+ * - 'client-view'    — view of data authoritative on a server; needs `server:` field
+ * - 'paired'         — cryptographically linked to a partner artifact
+ */
+export type Archetype = 'self-contained' | 'client-view' | 'paired';
+
+const ARCHETYPES: readonly Archetype[] = ['self-contained', 'client-view', 'paired'];
+
 export interface Manifest {
   name: string;
   version?: string;
   author?: string;
   description?: string;
+  archetype: Archetype;
+  /** Required when archetype === 'client-view'. HTTPS origin of the authoritative server. */
+  server?: string;
+  /** Required when archetype === 'paired'. Opaque identifier shared with the partner artifact. */
+  pairing_id?: string;
+  /** Required when archetype === 'paired'. Partner artifact's public key (base64). */
+  partner_pubkey?: string;
+  /** Optional for archetype === 'paired'. Signaling server URL; defaults to stele's reference server. */
+  signaling?: string;
   requires: Capability[];
 }
 
@@ -111,6 +131,16 @@ function parseCapability(raw: string): Capability {
   }
 }
 
+/** Validates that a value is a syntactically plausible HTTPS URL (origin only, no path). */
+function isHttpsUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && !!u.host;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Parses a manifest from artifact source code.
  *
@@ -152,6 +182,32 @@ export function parseManifest(source: string): Manifest | null {
       case 'version':     manifest.version = value; break;
       case 'author':      manifest.author = value; break;
       case 'description': manifest.description = value; break;
+      case 'archetype':
+        if (!ARCHETYPES.includes(value as Archetype)) {
+          throw new Error(`Manifest: unknown archetype '${value}'. Must be one of: ${ARCHETYPES.join(', ')}`);
+        }
+        manifest.archetype = value as Archetype;
+        break;
+      case 'server':
+        if (!isHttpsUrl(value)) {
+          throw new Error(`Manifest: 'server' must be an https:// URL, got '${value}'`);
+        }
+        manifest.server = value;
+        break;
+      case 'pairing_id':
+        if (!value) throw new Error(`Manifest: 'pairing_id' cannot be empty`);
+        manifest.pairing_id = value;
+        break;
+      case 'partner_pubkey':
+        if (!value) throw new Error(`Manifest: 'partner_pubkey' cannot be empty`);
+        manifest.partner_pubkey = value;
+        break;
+      case 'signaling':
+        if (!isHttpsUrl(value)) {
+          throw new Error(`Manifest: 'signaling' must be an https:// URL, got '${value}'`);
+        }
+        manifest.signaling = value;
+        break;
       case 'requires':
         // Either inline (e.g. `requires: []`) or start of list block
         if (value === '' || value === '[]') {
@@ -166,6 +222,28 @@ export function parseManifest(source: string): Manifest | null {
   }
 
   if (!manifest.name) throw new Error(`Manifest: 'name' is required`);
+
+  // Default archetype when unspecified.
+  if (!manifest.archetype) manifest.archetype = 'self-contained';
+
+  // Archetype-specific field rules — required where needed, forbidden elsewhere
+  // so misplaced fields surface as errors instead of being silently ignored.
+  if (manifest.archetype === 'client-view') {
+    if (!manifest.server) {
+      throw new Error(`Manifest: archetype 'client-view' requires a 'server' field (https:// URL)`);
+    }
+  } else if (manifest.server) {
+    throw new Error(`Manifest: 'server' is only valid for archetype 'client-view'`);
+  }
+
+  if (manifest.archetype === 'paired') {
+    if (!manifest.pairing_id) throw new Error(`Manifest: archetype 'paired' requires a 'pairing_id' field`);
+    if (!manifest.partner_pubkey) throw new Error(`Manifest: archetype 'paired' requires a 'partner_pubkey' field`);
+  } else {
+    if (manifest.pairing_id) throw new Error(`Manifest: 'pairing_id' is only valid for archetype 'paired'`);
+    if (manifest.partner_pubkey) throw new Error(`Manifest: 'partner_pubkey' is only valid for archetype 'paired'`);
+    if (manifest.signaling) throw new Error(`Manifest: 'signaling' is only valid for archetype 'paired'`);
+  }
 
   return manifest as Manifest;
 }
