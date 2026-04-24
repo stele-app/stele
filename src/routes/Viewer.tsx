@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getArtifact, markOpened, updateTags, updateTitle, subscribe } from '../lib/artifact-store';
+import { getArtifact, markOpened, updateTags, updateTitle, updateSource, subscribe } from '../lib/artifact-store';
 import { exportAsHtml, downloadHtml } from '../lib/export-html';
 import ViewerDispatch from '../viewers';
 import type { BridgeStatus } from '../runtime/bridge';
 import { parseManifest, capabilityId, type Manifest, type Capability, type Archetype } from '../runtime/manifest';
 import { getGranted, grantAll } from '../lib/permissions';
 import PermissionDialog from '../components/PermissionDialog';
+import AddManifestDialog from '../components/AddManifestDialog';
 
 export default function Viewer() {
   const { id } = useParams<{ id: string }>();
@@ -20,6 +21,7 @@ export default function Viewer() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [showSource, setShowSource] = useState(false);
+  const [showAddManifest, setShowAddManifest] = useState(false);
   const [, forceUpdate] = useState(0);
   const viewerContainerRef = useRef<HTMLDivElement>(null);
 
@@ -226,7 +228,28 @@ export default function Viewer() {
         }}>
           .{artifact.kind}
         </span>
-        {manifest && <ArchetypeBadge manifest={manifest} />}
+        {manifest ? (
+          <ArchetypeBadge manifest={manifest} />
+        ) : (
+          !parseErr && (artifact.kind === 'jsx' || artifact.kind === 'tsx') && (
+            <button
+              onClick={() => setShowAddManifest(true)}
+              title="Declare what capabilities this artifact needs"
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: 'transparent',
+                color: '#64748b',
+                border: '1px dashed #334155',
+                cursor: 'pointer',
+                fontWeight: 500,
+              }}
+            >
+              + add manifest
+            </button>
+          )
+        )}
         {/* Tags */}
         {artifact.tags.map(tag => (
           <span
@@ -438,6 +461,20 @@ export default function Viewer() {
           }}>
             Loading...
           </div>
+        )}
+
+        {/* Add-manifest dialog */}
+        {showAddManifest && (
+          <AddManifestDialog
+            suggestedName={artifact.title}
+            currentSource={artifact.source}
+            onSubmit={(newSource) => {
+              updateSource(artifact.id, newSource);
+              setShowAddManifest(false);
+              // Viewer re-renders because subscribe() fires; useMemo re-parses the manifest.
+            }}
+            onCancel={() => setShowAddManifest(false)}
+          />
         )}
 
         {/* Error overlay */}

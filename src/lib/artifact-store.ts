@@ -243,6 +243,29 @@ export function togglePin(id: string) {
   });
 }
 
+/**
+ * Replace the artifact's source text. The ID is a stable handle — it is NOT
+ * recomputed from the new content, so storage scope and permission grants
+ * keep pointing at the same artifact record.
+ */
+export function updateSource(id: string, source: string) {
+  const a = memArtifacts.find(a => a.id === id);
+  if (!a) return;
+
+  a.source = source;
+  a.sizeBytes = new TextEncoder().encode(source).length;
+  notify();
+
+  getDb().then(db => {
+    if (db) {
+      db.execute(
+        'UPDATE artifacts SET source_path = $1, size_bytes = $2 WHERE id = $3',
+        [a.source, a.sizeBytes, a.id]
+      );
+    }
+  });
+}
+
 export function updateTitle(id: string, title: string) {
   const a = memArtifacts.find(a => a.id === id);
   if (!a || !title.trim()) return;
