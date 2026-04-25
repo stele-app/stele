@@ -6,23 +6,26 @@
  * URL fragment — fragments never travel over the wire, so logs and referers
  * don't see the token.
  *
- * MVP limitations:
- * - Direct fetch only (CORS proxy comes in Week 3).
- * - No permission consent dialog yet — capabilities declared in the manifest
- *   are NOT granted, so artifacts that need network / camera / etc. will hit
- *   the default-deny sandbox. UI for consent comes later.
+ * Capability model matches desktop: manifest declares capabilities, the user
+ * consents via a dialog, and grants are stored in memory for the session
+ * (IndexedDB persistence is a planned follow-up).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   buildSandboxDoc,
+  capabilityAllowToken,
+  capabilityId,
   parseManifest,
   transformArtifact,
   type Archetype,
+  type Capability,
   type Manifest,
 } from '@stele/runtime';
 import { attachBridge, type BridgeStatus } from '../bridge';
+import { getGranted, grantAll } from '../permissions';
+import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
 type FetchState =
@@ -94,6 +97,11 @@ export default function Viewer() {
   const [status, setStatus] = useState<BridgeStatus | 'transforming' | 'idle'>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  // Capability consent state — mirrors desktop Viewer.
+  const [grantedCaps, setGrantedCaps] = useState<Set<string>>(new Set());
+  const [grantsLoaded, setGrantsLoaded] = useState(false);
+  const [consentBlocked, setConsentBlocked] = useState(false);
+
   // Stable artifact id for the lifetime of this page load — content hash
   // would be nice but we'd need crypto.subtle.digest; for MVP, use the URL.
   const artifactId = useMemo(() => src ?? 'no-src', [src]);
@@ -134,17 +142,74 @@ export default function Viewer() {
     }
   }, [fetchState]);
 
-  // Build sandbox doc when source + manifest are ready.
+  // Load per-artifact grants when the artifact id changes.
+  useEffect(() => {
+    if (!src) return;
+    let cancelled = false;
+    setGrantsLoaded(false);
+    setConsentBlocked(false);
+    getGranted(artifactId).then((g) => {
+      if (!cancelled) {
+        setGrantedCaps(g);
+        setGrantsLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [src, artifactId]);
+
+  // Pending caps = declared but not granted (and not session-blocked).
+  const pendingCaps = useMemo<Capability[]>(() => {
+    if (!manifest || !grantsLoaded || consentBlocked) return [];
+    return manifest.requires.filter((cap) => !grantedCaps.has(capabilityId(cap)));
+  }, [manifest, grantedCaps, grantsLoaded, consentBlocked]);
+
+  const showConsentDialog = pendingCaps.length > 0;
+
+  // Translate granted caps into the values buildSandboxDoc and iframe `allow=`
+  // need at render time.
+  const { grantedNetworkOrigins, iframeAllow } = useMemo(() => {
+    const origins: string[] = [];
+    const allowTokens: string[] = [];
+    if (manifest) {
+      for (const cap of manifest.requires) {
+        if (!grantedCaps.has(capabilityId(cap))) continue;
+        if (cap.kind === 'network') {
+          origins.push(cap.origin);
+        } else {
+          const t = capabilityAllowToken(cap);
+          if (t) allowTokens.push(t);
+        }
+      }
+    }
+    return { grantedNetworkOrigins: origins, iframeAllow: allowTokens.join('; ') };
+  }, [manifest, grantedCaps]);
+
+  const handleAllow = useCallback(async () => {
+    if (!manifest) return;
+    const ids = manifest.requires.map(capabilityId);
+    await grantAll(artifactId, ids);
+    setGrantedCaps((prev) => {
+      const next = new Set(prev);
+      ids.forEach((c) => next.add(c));
+      return next;
+    });
+  }, [manifest, artifactId]);
+
+  const handleBlock = useCallback(() => setConsentBlocked(true), []);
+
+  // Build sandbox doc when source + manifest + grants are ready.
   const [sandboxDoc, setSandboxDoc] = useState<string | null>(null);
   useEffect(() => {
-    if (fetchState.kind !== 'ok') { setSandboxDoc(null); return; }
+    if (fetchState.kind !== 'ok' || showConsentDialog || !grantsLoaded) {
+      setSandboxDoc(null);
+      return;
+    }
     let cancelled = false;
     setStatus('transforming');
 
     (async () => {
       try {
         if (fetchState.kind_ === 'html') {
-          // HTML artifacts don't go through transform — embed as-is.
           setSandboxDoc(fetchState.source);
           setStatus('loading');
           return;
@@ -154,8 +219,7 @@ export default function Viewer() {
         const doc = await buildSandboxDoc({
           transformedCode: transformed,
           artifactSource: fetchState.source,
-          // MVP: no granted capabilities. Permission consent UI is a follow-up.
-          grantedNetworkOrigins: [],
+          grantedNetworkOrigins,
         });
         if (!cancelled) {
           setSandboxDoc(doc);
@@ -170,7 +234,7 @@ export default function Viewer() {
     })();
 
     return () => { cancelled = true; };
-  }, [fetchState]);
+  }, [fetchState, showConsentDialog, grantsLoaded, grantedNetworkOrigins]);
 
   // Attach bridge to the iframe.
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -234,10 +298,19 @@ export default function Viewer() {
           </div>
         </Centered>
       )}
-      {fetchState.kind === 'ok' && !parseErr && sandboxDoc && (
+      {fetchState.kind === 'ok' && !parseErr && showConsentDialog && manifest && (
+        <PermissionDialog
+          manifest={manifest}
+          pending={pendingCaps}
+          onAllow={handleAllow}
+          onBlock={handleBlock}
+        />
+      )}
+      {fetchState.kind === 'ok' && !parseErr && !showConsentDialog && sandboxDoc && (
         <iframe
           ref={iframeRef}
           sandbox="allow-scripts allow-downloads"
+          allow={iframeAllow || undefined}
           srcDoc={sandboxDoc}
           style={{ width: '100%', height: '100%', border: 'none', background: 'white', flex: 1 }}
           title="Artifact sandbox"
