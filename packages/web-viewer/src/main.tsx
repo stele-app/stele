@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Landing from './routes/Landing';
 import Viewer from './routes/Viewer';
+import Library from './routes/Library';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('#root not found');
@@ -13,6 +14,7 @@ createRoot(rootEl).render(
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/view" element={<Viewer />} />
+        <Route path="/library" element={<Library />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

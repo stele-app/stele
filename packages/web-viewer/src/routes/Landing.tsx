@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Landing() {
   const [urlInput, setUrlInput] = useState('');
@@ -93,6 +93,23 @@ export default function Landing() {
           >
             Open
           </button>
+        </div>
+
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <Link to="/library" style={{
+            padding: '8px 16px',
+            borderRadius: 8,
+            border: '1px solid #334155',
+            color: '#cbd5e1',
+            fontSize: 13,
+            textDecoration: 'none',
+            fontWeight: 500,
+          }}>
+            Open library →
+          </Link>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            Recently-opened artifacts on this device
+          </span>
         </div>
 
         <div style={{ marginTop: 48, fontSize: 13, color: '#64748b', lineHeight: 1.6 }}>

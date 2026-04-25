@@ -1,22 +1,27 @@
 /**
  * Tiny IndexedDB wrapper for the web viewer.
  *
- * Two object stores, both keyed on compound paths so we can scope per artifact:
+ * Object stores:
  *
  * - 'storage'     — value: string. Keys: [artifactId, scope, key].
  *                   `scope` is '__shared__' for window.storage(_, true) entries
  *                   and the artifactId itself otherwise.
  * - 'permissions' — value: { grantedAt: number }. Keys: [artifactId, capability].
+ * - 'library'     — value: LibraryEntry. Key: src (URL). Recently-opened
+ *                   artifacts the user has visited via /view?src=…, so the
+ *                   web viewer can list them like the desktop library.
  *
- * No migrations beyond version 1; add a v2 with onupgradeneeded if the schema
- * evolves. All errors surface as rejected promises — callers decide whether
- * to fall back gracefully (the bridge does for storage; consent flow does too).
+ * Schema migrations live in the open() onupgradeneeded handler. Bump
+ * DB_VERSION + add an `if (event.oldVersion < N)` block when adding stores.
+ * All errors surface as rejected promises — callers decide whether to fall
+ * back gracefully (the bridge does for storage; consent flow does too).
  */
 
 const DB_NAME = 'stele-web';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_STORAGE = 'storage';
 const STORE_PERMISSIONS = 'permissions';
+const STORE_LIBRARY = 'library';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -26,11 +31,17 @@ function open(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // v1 stores
       if (!db.objectStoreNames.contains(STORE_STORAGE)) {
         db.createObjectStore(STORE_STORAGE, { keyPath: ['artifactId', 'scope', 'key'] });
       }
       if (!db.objectStoreNames.contains(STORE_PERMISSIONS)) {
         db.createObjectStore(STORE_PERMISSIONS, { keyPath: ['artifactId', 'capability'] });
+      }
+      // v2 stores
+      if (!db.objectStoreNames.contains(STORE_LIBRARY)) {
+        const lib = db.createObjectStore(STORE_LIBRARY, { keyPath: 'src' });
+        lib.createIndex('lastOpenedAt', 'lastOpenedAt');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -141,5 +152,64 @@ export async function permissionsAdd(artifactId: string, capabilities: string[])
   for (const c of capabilities) {
     store.put({ artifactId, capability: c, grantedAt: now });
   }
+  await txComplete(tx);
+}
+
+// ── Library ───────────────────────────────────────────────────────────
+
+export interface LibraryEntry {
+  /** The URL the artifact was loaded from. Acts as the primary key. */
+  src: string;
+  /** Display name from the manifest, or a filename fallback. */
+  title: string;
+  /** Archetype from the manifest, or 'self-contained' if no manifest. */
+  archetype: 'self-contained' | 'client-view' | 'paired';
+  /** Optional server host string, for client-view entries. */
+  serverHost?: string;
+  addedAt: number;
+  lastOpenedAt: number;
+  openCount: number;
+}
+
+/**
+ * Insert or update a library entry. Bumps lastOpenedAt + openCount on each
+ * call; `addedAt` is preserved on existing rows.
+ */
+export async function libraryUpsert(partial: Omit<LibraryEntry, 'addedAt' | 'lastOpenedAt' | 'openCount'>): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
+  const store = tx.objectStore(STORE_LIBRARY);
+  const existing = await promisify<LibraryEntry | undefined>(store.get(partial.src));
+  const now = Date.now();
+  store.put({
+    ...partial,
+    addedAt: existing?.addedAt ?? now,
+    lastOpenedAt: now,
+    openCount: (existing?.openCount ?? 0) + 1,
+  } satisfies LibraryEntry);
+  await txComplete(tx);
+}
+
+/** All library entries, most-recently-opened first. */
+export async function libraryList(): Promise<LibraryEntry[]> {
+  const db = await open();
+  const tx = db.transaction(STORE_LIBRARY, 'readonly');
+  const out: LibraryEntry[] = [];
+  return new Promise((resolve, reject) => {
+    const req = tx.objectStore(STORE_LIBRARY).index('lastOpenedAt').openCursor(null, 'prev');
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) { resolve(out); return; }
+      out.push(cursor.value as LibraryEntry);
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function libraryDelete(src: string): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
+  tx.objectStore(STORE_LIBRARY).delete(src);
   await txComplete(tx);
 }

@@ -25,6 +25,7 @@ import {
 } from '@stele/runtime';
 import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
+import { libraryUpsert } from '../idb';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -87,6 +88,16 @@ function hashToken(): string | null {
 
 function hostOf(url: string): string {
   try { return new URL(url).host; } catch { return url; }
+}
+
+function filenameFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split('/').filter(Boolean).pop();
+    return last || u.host;
+  } catch {
+    return url;
+  }
 }
 
 export default function Viewer() {
@@ -235,6 +246,20 @@ export default function Viewer() {
 
     return () => { cancelled = true; };
   }, [fetchState, showConsentDialog, grantsLoaded, grantedNetworkOrigins]);
+
+  // Record this artifact in the library once the source is fetched and the
+  // manifest (if any) has parsed cleanly. Failures are non-fatal — the viewer
+  // still works without persistence.
+  useEffect(() => {
+    if (!src || fetchState.kind !== 'ok' || parseErr) return;
+    const title = manifest?.name || filenameFromUrl(src);
+    libraryUpsert({
+      src,
+      title,
+      archetype: manifest?.archetype ?? 'self-contained',
+      serverHost: manifest?.archetype === 'client-view' && manifest.server ? hostOf(manifest.server) : undefined,
+    }).catch(() => {/* IDB unavailable — skip */});
+  }, [src, fetchState, manifest, parseErr]);
 
   // Attach bridge to the iframe.
   const iframeRef = useRef<HTMLIFrameElement>(null);
