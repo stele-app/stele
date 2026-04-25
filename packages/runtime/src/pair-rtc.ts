@@ -126,30 +126,33 @@ async function pollSignals(signalingUrl: string, pairingId: string, since: numbe
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Default ICE servers. STUN handles ~80% of home / wifi pairs; TURN is required
- * for symmetric-NAT networks (most cellular carriers, some corporate).
- *
- * Open Relay is a free public TURN service from Metered — fine for early testing
- * and demos but rate-limited and best-effort. Production use should swap in a
- * dedicated TURN service (Cloudflare Calls, Twilio, self-hosted coturn) via the
- * `iceServers` option on connectPair.
+ * Last-resort fallback ICE config. The signaling Worker normally serves
+ * short-lived TURN credentials via /turn-credentials (Cloudflare Calls).
+ * If that endpoint is unreachable or unconfigured we fall back to STUN —
+ * connections only succeed for same-network pairs where mDNS / direct
+ * UDP works.
  */
-const DEFAULT_ICE: RTCIceServer[] = [
+const FALLBACK_ICE: RTCIceServer[] = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
   { urls: 'stun:stun.l.google.com:19302' },
-  {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp',
-    ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
+
+async function fetchIceServers(signalingUrl: string): Promise<RTCIceServer[]> {
+  try {
+    const resp = await fetch(`${signalingUrl.replace(/\/$/, '')}/turn-credentials`);
+    if (!resp.ok) return FALLBACK_ICE;
+    const data = await resp.json() as { iceServers?: RTCIceServer[] | RTCIceServer };
+    if (!data.iceServers) return FALLBACK_ICE;
+    return Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
+  } catch (err) {
+    console.warn('[pair-rtc] turn-credentials fetch failed, falling back to STUN:', err);
+    return FALLBACK_ICE;
+  }
+}
 
 export async function connectPair(opts: PairConnectOptions): Promise<PairConnection> {
   const pollIntervalMs = opts.pollIntervalMs ?? 1500;
-  const iceServers = opts.iceServers ?? DEFAULT_ICE;
+  const iceServers = opts.iceServers ?? await fetchIceServers(opts.signalingUrl);
 
   const [sharedKey, myPubkeyB64] = await Promise.all([
     deriveSharedKeyFromBase64(opts.privateKeyB64, opts.partnerPublicKeyB64),

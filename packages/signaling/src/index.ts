@@ -27,6 +27,10 @@
 
 interface Env {
   SIGNALING_KV: KVNamespace;
+  /** Cloudflare Realtime / Calls TURN App ID. Set via `wrangler secret put CALLS_TOKEN_ID`. */
+  CALLS_TOKEN_ID?: string;
+  /** Cloudflare Realtime / Calls TURN API token. Set via `wrangler secret put CALLS_API_TOKEN`. */
+  CALLS_API_TOKEN?: string;
 }
 
 interface SignalMessage {
@@ -129,15 +133,79 @@ async function handleGet(request: Request, env: Env): Promise<Response> {
   return jsonOk({ messages, now: Date.now() });
 }
 
+/**
+ * GET /turn-credentials
+ *
+ * Mints short-lived TURN credentials via the Cloudflare Realtime / Calls API
+ * and returns them in WebRTC iceServers format. The TOKEN_ID + API_TOKEN are
+ * never exposed to the client — only the per-session username + credential
+ * (which expire in TTL_SECONDS) cross the wire.
+ *
+ * If the Calls secrets aren't configured, returns STUN-only servers so the
+ * runtime still works for same-network pairing while the operator provisions
+ * TURN.
+ */
+const TURN_TTL_SECONDS = 3600;
+
+async function handleTurnCredentials(env: Env): Promise<Response> {
+  const stunOnly = {
+    iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }],
+    note: 'TURN not configured on this signaling deployment — STUN-only fallback. Cross-NAT pairs may fail.',
+  };
+
+  if (!env.CALLS_TOKEN_ID || !env.CALLS_API_TOKEN) {
+    return jsonOk(stunOnly);
+  }
+
+  try {
+    const resp = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${env.CALLS_TOKEN_ID}/credentials/generate`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.CALLS_API_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+      },
+    );
+    if (!resp.ok) {
+      const body = await resp.text();
+      console.error('[turn-credentials] Cloudflare Calls API error:', resp.status, body);
+      return jsonOk(stunOnly);
+    }
+    const data = await resp.json() as { iceServers?: { urls: string | string[]; username?: string; credential?: string } };
+    if (!data.iceServers) return jsonOk(stunOnly);
+
+    // Cloudflare returns a single iceServers object; combine with public STUN
+    // for diversity in case the TURN allocation hits a transient issue.
+    return jsonOk({
+      iceServers: [
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        data.iceServers,
+      ],
+    });
+  } catch (err) {
+    console.error('[turn-credentials] fetch failed:', err);
+    return jsonOk(stunOnly);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
     const url = new URL(request.url);
-    if (url.pathname !== '/messages') return jsonError(`Unknown path '${url.pathname}'`, 404);
-    if (request.method === 'POST') return handlePost(request, env);
-    if (request.method === 'GET') return handleGet(request, env);
-    return jsonError(`Method ${request.method} not allowed`, 405);
+    if (url.pathname === '/messages') {
+      if (request.method === 'POST') return handlePost(request, env);
+      if (request.method === 'GET') return handleGet(request, env);
+      return jsonError(`Method ${request.method} not allowed`, 405);
+    }
+    if (url.pathname === '/turn-credentials') {
+      if (request.method !== 'GET') return jsonError(`Method ${request.method} not allowed`, 405);
+      return handleTurnCredentials(env);
+    }
+    return jsonError(`Unknown path '${url.pathname}'`, 404);
   },
 };
