@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactCard from '../components/ArtifactCard';
+import OpenUrlDialog from '../components/OpenUrlDialog';
 import {
   getArtifacts,
   subscribe,
@@ -9,6 +10,7 @@ import {
   deleteArtifact,
   type Artifact,
 } from '../lib/artifact-store';
+import { setToken } from '../lib/tokens';
 
 import demoSource from '../fixtures/demo.jsx?raw';
 
@@ -19,6 +21,7 @@ export default function Library() {
   const [artifacts, setArtifacts] = useState<Artifact[]>(getArtifacts());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
+  const [showOpenUrl, setShowOpenUrl] = useState(false);
 
   useEffect(() => {
     return subscribe(() => setArtifacts(getArtifacts()));
@@ -60,6 +63,13 @@ export default function Library() {
     navigate(`/view/${artifact.id}`);
   }, [navigate]);
 
+  const handleOpenFromUrl = useCallback(async (source: string, filename: string, token: string | null) => {
+    const artifact = await importArtifact(source, filename);
+    if (token) setToken(artifact.id, token);
+    setShowOpenUrl(false);
+    navigate(`/view/${artifact.id}`);
+  }, [navigate]);
+
   const filtered = search
     ? artifacts.filter(a =>
         a.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -88,6 +98,21 @@ export default function Library() {
           onChange={handleFileInput}
           style={{ display: 'none' }}
         />
+        <button
+          onClick={() => setShowOpenUrl(true)}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: '1px solid #334155',
+            background: 'transparent',
+            color: '#cbd5e1',
+            fontSize: '13px',
+            fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          Open URL…
+        </button>
         <button
           onClick={() => fileInputRef.current?.click()}
           style={{
@@ -188,6 +213,13 @@ export default function Library() {
             />
           ))}
         </div>
+      )}
+
+      {showOpenUrl && (
+        <OpenUrlDialog
+          onOpen={handleOpenFromUrl}
+          onCancel={() => setShowOpenUrl(false)}
+        />
       )}
     </div>
   );
