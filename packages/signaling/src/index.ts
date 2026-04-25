@@ -41,6 +41,9 @@ interface SignalMessage {
 
 const MESSAGE_TTL_SECONDS = 300;
 const MAX_PAYLOAD_BYTES = 32 * 1024;
+/** Cap how many messages we retain per room so the JSON blob stays small. */
+const MAX_MESSAGES_PER_ROOM = 200;
+const ROOM_KEY = (pairingId: string) => `room:${pairingId}`;
 
 function corsHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
@@ -72,6 +75,38 @@ function isSafePairingId(id: string): boolean {
   return /^[A-Za-z0-9._\-:]{1,128}$/.test(id);
 }
 
+/**
+ * Each room is stored as ONE KV value (a JSON array of messages), not as
+ * many keys. This keeps GET to a single KV.get per poll cycle and avoids
+ * KV.list() entirely — Cloudflare's free tier caps list operations at
+ * 1000/day, which two peers polling at 1.5s exhaust in ~12 minutes.
+ *
+ * The trade-off: concurrent POSTs race (read-modify-write without CAS),
+ * so simultaneous messages from both peers can lose one of them. For
+ * SDP/ICE handshake this is acceptable — each side retries on the next
+ * poll cycle if the channel doesn't open. If we need stricter semantics
+ * later, swap KV for a Durable Object per room.
+ */
+async function readRoom(env: Env, pairingId: string): Promise<SignalMessage[]> {
+  const raw = await env.SIGNALING_KV.get(ROOM_KEY(pairingId));
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+async function writeRoom(env: Env, pairingId: string, messages: SignalMessage[]): Promise<void> {
+  const trimmed = messages.length > MAX_MESSAGES_PER_ROOM
+    ? messages.slice(-MAX_MESSAGES_PER_ROOM)
+    : messages;
+  await env.SIGNALING_KV.put(
+    ROOM_KEY(pairingId),
+    JSON.stringify(trimmed),
+    { expirationTtl: MESSAGE_TTL_SECONDS },
+  );
+}
+
 async function handlePost(request: Request, env: Env): Promise<Response> {
   let body: unknown;
   try { body = await request.json(); }
@@ -88,19 +123,17 @@ async function handlePost(request: Request, env: Env): Promise<Response> {
   }
   if (payload === undefined) return jsonError('payload required', 400);
 
-  const serialized = JSON.stringify({ from, payload, ts: Date.now() } satisfies SignalMessage);
-  if (serialized.length > MAX_PAYLOAD_BYTES) {
+  const message: SignalMessage = { from, payload, ts: Date.now() };
+  const serializedMessage = JSON.stringify(message);
+  if (serializedMessage.length > MAX_PAYLOAD_BYTES) {
     return jsonError(`Message too large (limit ${MAX_PAYLOAD_BYTES} bytes)`, 413);
   }
 
-  const ts = Date.now();
-  // Key includes ts so list() returns chronological-ish order; suffix random
-  // bytes so concurrent posts don't collide.
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const key = `room:${pairingId}:${ts.toString().padStart(15, '0')}:${suffix}`;
+  const existing = await readRoom(env, pairingId);
+  existing.push(message);
+  await writeRoom(env, pairingId, existing);
 
-  await env.SIGNALING_KV.put(key, serialized, { expirationTtl: MESSAGE_TTL_SECONDS });
-  return jsonOk({ ts });
+  return jsonOk({ ts: message.ts });
 }
 
 async function handleGet(request: Request, env: Env): Promise<Response> {
@@ -115,21 +148,11 @@ async function handleGet(request: Request, env: Env): Promise<Response> {
     return jsonError('since must be a non-negative number (ms timestamp)', 400);
   }
 
-  const list = await env.SIGNALING_KV.list({ prefix: `room:${pairingId}:`, limit: 200 });
+  const all = await readRoom(env, pairingId);
+  const messages = all
+    .filter((m) => typeof m?.ts === 'number' && m.ts > since)
+    .sort((a, b) => a.ts - b.ts);
 
-  const messages: SignalMessage[] = [];
-  await Promise.all(list.keys.map(async (k) => {
-    const raw = await env.SIGNALING_KV.get(k.name);
-    if (!raw) return;
-    try {
-      const msg = JSON.parse(raw) as SignalMessage;
-      if (typeof msg.ts === 'number' && msg.ts > since) messages.push(msg);
-    } catch {
-      // Ignore corrupt rows.
-    }
-  }));
-
-  messages.sort((a, b) => a.ts - b.ts);
   return jsonOk({ messages, now: Date.now() });
 }
 
