@@ -125,7 +125,27 @@ async function pollSignals(signalingUrl: string, pairingId: string, since: numbe
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-const DEFAULT_ICE: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+/**
+ * Default ICE servers. STUN handles ~80% of home / wifi pairs; TURN is required
+ * for symmetric-NAT networks (most cellular carriers, some corporate).
+ *
+ * Open Relay is a free public TURN service from Metered — fine for early testing
+ * and demos but rate-limited and best-effort. Production use should swap in a
+ * dedicated TURN service (Cloudflare Calls, Twilio, self-hosted coturn) via the
+ * `iceServers` option on connectPair.
+ */
+const DEFAULT_ICE: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
 
 export async function connectPair(opts: PairConnectOptions): Promise<PairConnection> {
   const pollIntervalMs = opts.pollIntervalMs ?? 1500;
