@@ -3,5 +3,8 @@
   "buildCommand": "cd ../.. && pnpm install --frozen-lockfile && (cd vendor-src && pnpm install --frozen-lockfile --ignore-workspace) && pnpm prebuild:vendor && pnpm --filter @stele/web-viewer build",
   "installCommand": "echo 'install handled inside buildCommand'",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
+  ]
 }
