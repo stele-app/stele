@@ -41,9 +41,14 @@ interface SignalMessage {
 
 const MESSAGE_TTL_SECONDS = 300;
 const MAX_PAYLOAD_BYTES = 32 * 1024;
-/** Cap how many messages we retain per room so the JSON blob stays small. */
-const MAX_MESSAGES_PER_ROOM = 200;
-const ROOM_KEY = (pairingId: string) => `room:${pairingId}`;
+/** Cap how many messages we retain per peer so the JSON blob stays small. */
+const MAX_MESSAGES_PER_PEER = 200;
+/**
+ * Per-peer key. Each peer posts only to their own key — no inter-peer write
+ * race. Same-peer concurrent writes (offer + ICE trickle) are serialized in
+ * the runtime via a Promise queue, eliminating the read-modify-write race.
+ */
+const PEER_KEY = (pairingId: string, from: string) => `room:${pairingId}:${from}`;
 
 function corsHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
@@ -75,20 +80,8 @@ function isSafePairingId(id: string): boolean {
   return /^[A-Za-z0-9._\-:]{1,128}$/.test(id);
 }
 
-/**
- * Each room is stored as ONE KV value (a JSON array of messages), not as
- * many keys. This keeps GET to a single KV.get per poll cycle and avoids
- * KV.list() entirely — Cloudflare's free tier caps list operations at
- * 1000/day, which two peers polling at 1.5s exhaust in ~12 minutes.
- *
- * The trade-off: concurrent POSTs race (read-modify-write without CAS),
- * so simultaneous messages from both peers can lose one of them. For
- * SDP/ICE handshake this is acceptable — each side retries on the next
- * poll cycle if the channel doesn't open. If we need stricter semantics
- * later, swap KV for a Durable Object per room.
- */
-async function readRoom(env: Env, pairingId: string): Promise<SignalMessage[]> {
-  const raw = await env.SIGNALING_KV.get(ROOM_KEY(pairingId));
+async function readPeer(env: Env, pairingId: string, peer: string): Promise<SignalMessage[]> {
+  const raw = await env.SIGNALING_KV.get(PEER_KEY(pairingId, peer));
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -96,12 +89,12 @@ async function readRoom(env: Env, pairingId: string): Promise<SignalMessage[]> {
   } catch { return []; }
 }
 
-async function writeRoom(env: Env, pairingId: string, messages: SignalMessage[]): Promise<void> {
-  const trimmed = messages.length > MAX_MESSAGES_PER_ROOM
-    ? messages.slice(-MAX_MESSAGES_PER_ROOM)
+async function writePeer(env: Env, pairingId: string, peer: string, messages: SignalMessage[]): Promise<void> {
+  const trimmed = messages.length > MAX_MESSAGES_PER_PEER
+    ? messages.slice(-MAX_MESSAGES_PER_PEER)
     : messages;
   await env.SIGNALING_KV.put(
-    ROOM_KEY(pairingId),
+    PEER_KEY(pairingId, peer),
     JSON.stringify(trimmed),
     { expirationTtl: MESSAGE_TTL_SECONDS },
   );
@@ -124,14 +117,13 @@ async function handlePost(request: Request, env: Env): Promise<Response> {
   if (payload === undefined) return jsonError('payload required', 400);
 
   const message: SignalMessage = { from, payload, ts: Date.now() };
-  const serializedMessage = JSON.stringify(message);
-  if (serializedMessage.length > MAX_PAYLOAD_BYTES) {
+  if (JSON.stringify(message).length > MAX_PAYLOAD_BYTES) {
     return jsonError(`Message too large (limit ${MAX_PAYLOAD_BYTES} bytes)`, 413);
   }
 
-  const existing = await readRoom(env, pairingId);
+  const existing = await readPeer(env, pairingId, from);
   existing.push(message);
-  await writeRoom(env, pairingId, existing);
+  await writePeer(env, pairingId, from, existing);
 
   return jsonOk({ ts: message.ts });
 }
@@ -139,16 +131,20 @@ async function handlePost(request: Request, env: Env): Promise<Response> {
 async function handleGet(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const pairingId = url.searchParams.get('pairingId');
+  const peer = url.searchParams.get('peer'); // partner's pubkey — fetch their messages
   const since = Number(url.searchParams.get('since') ?? '0');
 
   if (!pairingId || !isSafePairingId(pairingId)) {
     return jsonError('pairingId required (1..128 chars of [A-Za-z0-9._-:])', 400);
   }
+  if (!peer || peer.length > 1024) {
+    return jsonError('peer required (partner pubkey)', 400);
+  }
   if (!Number.isFinite(since) || since < 0) {
     return jsonError('since must be a non-negative number (ms timestamp)', 400);
   }
 
-  const all = await readRoom(env, pairingId);
+  const all = await readPeer(env, pairingId, peer);
   const messages = all
     .filter((m) => typeof m?.ts === 'number' && m.ts > since)
     .sort((a, b) => a.ts - b.ts);

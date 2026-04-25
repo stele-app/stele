@@ -116,8 +116,20 @@ async function postSignal(signalingUrl: string, pairingId: string, from: string,
   if (!resp.ok) throw new Error(`Signaling POST failed: ${resp.status} ${resp.statusText}`);
 }
 
-async function pollSignals(signalingUrl: string, pairingId: string, since: number): Promise<PollResponse> {
-  const url = `${signalingUrl.replace(/\/$/, '')}/messages?pairingId=${encodeURIComponent(pairingId)}&since=${since}`;
+/** Serialise this peer's outbound posts so concurrent offer + ICE writes
+ *  don't collide on the per-peer KV row at the server. */
+function makePostQueue(signalingUrl: string, pairingId: string, from: string) {
+  let tail: Promise<void> = Promise.resolve();
+  return (payload: SignalPayload) => {
+    const next = tail.then(() => postSignal(signalingUrl, pairingId, from, payload));
+    // Swallow rejections on the chain so one bad post doesn't break the queue.
+    tail = next.catch(() => {});
+    return next;
+  };
+}
+
+async function pollSignals(signalingUrl: string, pairingId: string, peer: string, since: number): Promise<PollResponse> {
+  const url = `${signalingUrl.replace(/\/$/, '')}/messages?pairingId=${encodeURIComponent(pairingId)}&peer=${encodeURIComponent(peer)}&since=${since}`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Signaling GET failed: ${resp.status} ${resp.statusText}`);
   return await resp.json() as PollResponse;
@@ -166,6 +178,10 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
   let status: PairStatus = 'connecting';
   let cancelled = false;
 
+  // Serialise this peer's outbound signals so the offer and trickled ICE
+  // candidates don't race against each other in the worker's read-modify-write.
+  const post = makePostQueue(opts.signalingUrl, opts.pairingId, myPubkeyB64);
+
   const messageHandlers = new Set<(data: string) => void>();
   const statusHandlers = new Set<(status: PairStatus) => void>();
 
@@ -193,7 +209,7 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
 
   pc.onicecandidate = (ev) => {
     if (!ev.candidate) return; // end-of-candidates sentinel — nothing to forward
-    postSignal(opts.signalingUrl, opts.pairingId, myPubkeyB64, {
+    post({
       kind: 'ice',
       candidate: ev.candidate.toJSON(),
     }).catch((err) => console.warn('[pair-rtc] ICE post failed:', err));
@@ -209,7 +225,7 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
     setupChannel(pc.createDataChannel('stele-pair'));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await postSignal(opts.signalingUrl, opts.pairingId, myPubkeyB64, { kind: 'offer', sdp: offer.sdp ?? '' });
+    await post({ kind: 'offer', sdp: offer.sdp ?? '' });
   } else {
     pc.ondatachannel = (ev) => setupChannel(ev.channel);
     setStatus('waiting-for-partner');
@@ -232,7 +248,7 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
   (async function pollLoop() {
     while (!cancelled) {
       try {
-        const { messages, now } = await pollSignals(opts.signalingUrl, opts.pairingId, since);
+        const { messages, now } = await pollSignals(opts.signalingUrl, opts.pairingId, opts.partnerPublicKeyB64, since);
         since = now;
 
         // Pick the latest offer / answer (if any) so we ignore stale ones
@@ -260,7 +276,7 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
             await pc.setRemoteDescription({ type: 'offer', sdp: p.sdp });
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            await postSignal(opts.signalingUrl, opts.pairingId, myPubkeyB64, { kind: 'answer', sdp: answer.sdp ?? '' });
+            await post({ kind: 'answer', sdp: answer.sdp ?? '' });
           }
           if (latestAnswer && isInitiator && latestAnswer.ts > appliedAnswerTs) {
             appliedAnswerTs = latestAnswer.ts;
