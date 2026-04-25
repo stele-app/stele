@@ -12,7 +12,19 @@ export default function Landing() {
   const open = () => {
     const url = urlInput.trim();
     if (!url) return;
-    navigate(`/view?src=${encodeURIComponent(url)}`);
+
+    // Pull a #token=... fragment off the pasted URL and reattach it as the
+    // viewer page's own fragment, so window.location.hash can see it.
+    // Encoding the whole URL into `src` would bury the fragment inside the
+    // query string and the token would be lost.
+    const hashIdx = url.indexOf('#token=');
+    if (hashIdx >= 0) {
+      const sourceUrl = url.slice(0, hashIdx);
+      const tokenFragment = url.slice(hashIdx); // '#token=...'
+      navigate(`/view?src=${encodeURIComponent(sourceUrl)}${tokenFragment}`);
+    } else {
+      navigate(`/view?src=${encodeURIComponent(url)}`);
+    }
   };
 
   return (
