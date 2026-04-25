@@ -10,21 +10,38 @@ export default function Landing() {
   const navigate = useNavigate();
 
   const open = () => {
-    const url = urlInput.trim();
-    if (!url) return;
+    const raw = urlInput.trim();
+    if (!raw) return;
 
-    // Pull a #token=... fragment off the pasted URL and reattach it as the
+    // If the user pasted a Stele share link (any URL whose path is /view with
+    // a src= query param), unwrap it instead of double-wrapping. Otherwise
+    // pasting your own canonical share link from the address bar would build
+    //   /view?src=https://stele.au/view?src=<original>
+    // and Stele would try to fetch its own HTML as the artifact source.
+    let target = raw;
+    let carriedFragment = '';
+    try {
+      const u = new URL(raw);
+      if (u.pathname === '/view' && u.searchParams.has('src')) {
+        target = u.searchParams.get('src')!;
+        if (u.hash.startsWith('#token=')) carriedFragment = u.hash;
+      }
+    } catch {
+      // Not a parseable URL — fall through; navigate will treat it as-is.
+    }
+
+    // Pull a #token=... fragment off the target URL and reattach it as the
     // viewer page's own fragment, so window.location.hash can see it.
     // Encoding the whole URL into `src` would bury the fragment inside the
     // query string and the token would be lost.
-    const hashIdx = url.indexOf('#token=');
+    const hashIdx = target.indexOf('#token=');
+    let tokenFragment = carriedFragment;
     if (hashIdx >= 0) {
-      const sourceUrl = url.slice(0, hashIdx);
-      const tokenFragment = url.slice(hashIdx); // '#token=...'
-      navigate(`/view?src=${encodeURIComponent(sourceUrl)}${tokenFragment}`);
-    } else {
-      navigate(`/view?src=${encodeURIComponent(url)}`);
+      tokenFragment = target.slice(hashIdx); // '#token=...'
+      target = target.slice(0, hashIdx);
     }
+
+    navigate(`/view?src=${encodeURIComponent(target)}${tokenFragment}`);
   };
 
   return (
