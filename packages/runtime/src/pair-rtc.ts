@@ -299,11 +299,18 @@ export async function connectPair(opts: PairConnectOptions): Promise<PairConnect
             const p = latestAnswer.payload as { kind: 'answer'; sdp: string };
             await pc.setRemoteDescription({ type: 'answer', sdp: p.sdp });
           }
+          // Only add ICE candidates from the CURRENT session — anything older
+          // than the latest offer/answer we applied is from a prior pairing
+          // attempt with different ufrags. addIceCandidate would fail silently
+          // for those, but the failed attempts can pollute Chrome's ICE state
+          // and prevent the live candidates from establishing a connection.
+          const currentSessionTs = Math.max(appliedOfferTs, appliedAnswerTs);
           for (const env of iceMsgs) {
+            if (env.ts < currentSessionTs) continue;
             const p = env.payload as { kind: 'ice'; candidate: RTCIceCandidateInit };
             if (!p.candidate) continue;
             try { await pc.addIceCandidate(p.candidate); }
-            catch { /* stale ICE from prior session — harmless */ }
+            catch { /* candidate from a partner pc that's no longer relevant */ }
           }
         } catch (err) {
           console.error('[pair-rtc] applying signal failed:', err);
