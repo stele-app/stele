@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Landing from './routes/Landing';
 import Viewer from './routes/Viewer';
 import Library from './routes/Library';
+import Settings from './routes/Settings';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('#root not found');
@@ -15,6 +16,7 @@ createRoot(rootEl).render(
         <Route path="/" element={<Landing />} />
         <Route path="/view" element={<Viewer />} />
         <Route path="/library" element={<Library />} />
+        <Route path="/settings" element={<Settings />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

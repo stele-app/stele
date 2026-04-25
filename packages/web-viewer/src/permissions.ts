@@ -36,3 +36,12 @@ export async function grantAll(artifactId: string, capabilityIds: string[]): Pro
     // Persist failed; cache still has the grant for the session.
   }
 }
+
+/**
+ * Drop the in-memory cache so the next getGranted re-reads from IDB. Called
+ * by the Settings page after revokes / clears so the viewer doesn't serve
+ * stale "granted" sets on the next mount.
+ */
+export function invalidateCache(): void {
+  cache.clear();
+}

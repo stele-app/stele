@@ -155,6 +155,42 @@ export async function permissionsAdd(artifactId: string, capabilities: string[])
   await txComplete(tx);
 }
 
+/** Every (artifactId, capability) row across the whole DB — used by the Settings page. */
+export async function permissionsListAll(): Promise<PermissionRow[]> {
+  const db = await open();
+  const tx = db.transaction(STORE_PERMISSIONS, 'readonly');
+  const out: PermissionRow[] = [];
+  return new Promise((resolve, reject) => {
+    const req = tx.objectStore(STORE_PERMISSIONS).openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) { resolve(out); return; }
+      out.push(cursor.value as PermissionRow);
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function permissionsRevoke(artifactId: string, capability: string): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(STORE_PERMISSIONS, 'readwrite');
+  tx.objectStore(STORE_PERMISSIONS).delete([artifactId, capability]);
+  await txComplete(tx);
+}
+
+/** Wipe a single object store. Used by "Clear library / storage / permissions" in Settings. */
+async function clearStore(name: string): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(name, 'readwrite');
+  tx.objectStore(name).clear();
+  await txComplete(tx);
+}
+
+export const clearLibrary     = () => clearStore(STORE_LIBRARY);
+export const clearStorage     = () => clearStore(STORE_STORAGE);
+export const clearPermissions = () => clearStore(STORE_PERMISSIONS);
+
 // ── Library ───────────────────────────────────────────────────────────
 
 export interface LibraryEntry {

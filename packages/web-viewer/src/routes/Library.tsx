@@ -37,6 +37,8 @@ export default function Library() {
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState('');
+  /** Most-recently-shared src key, so the matching card can show "Copied ✓" briefly. */
+  const [copiedSrc, setCopiedSrc] = useState<string | null>(null);
 
   useEffect(() => {
     libraryList()
@@ -61,6 +63,19 @@ export default function Library() {
     e.stopPropagation();
     await libraryDelete(src);
     setEntries((prev) => prev.filter((x) => x.src !== src));
+  };
+
+  const handleShare = async (e: React.MouseEvent, src: string) => {
+    e.stopPropagation();
+    const shareUrl = `${window.location.origin}/view?src=${encodeURIComponent(src)}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedSrc(src);
+      setTimeout(() => setCopiedSrc((curr) => (curr === src ? null : curr)), 1800);
+    } catch {
+      // Clipboard blocked — surface the URL so the user can copy by hand.
+      window.prompt('Copy this share link:', shareUrl);
+    }
   };
 
   return (
@@ -156,10 +171,26 @@ export default function Library() {
                     (e.currentTarget as HTMLElement).style.transform = 'none';
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'start', gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'start', gap: 6, marginBottom: 8 }}>
                     <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: '#e2e8f0', wordBreak: 'break-word' }}>
                       {entry.title}
                     </div>
+                    <button
+                      onClick={(e) => handleShare(e, entry.src)}
+                      title="Copy share link (no token included)"
+                      style={{
+                        padding: '2px 8px',
+                        background: copiedSrc === entry.src ? '#0f2a1f' : 'transparent',
+                        border: `1px solid ${copiedSrc === entry.src ? '#14532d' : '#334155'}`,
+                        color: copiedSrc === entry.src ? '#86efac' : '#94a3b8',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        borderRadius: 4,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {copiedSrc === entry.src ? 'Copied ✓' : 'Share'}
+                    </button>
                     <button
                       onClick={(e) => handleDelete(e, entry.src)}
                       title="Remove from library"
