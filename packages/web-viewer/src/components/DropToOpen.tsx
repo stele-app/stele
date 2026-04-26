@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
+import { localArtifactPut, LOCAL_SCHEME } from '../idb';
 
 export const ACCEPTED_EXTS = ['.stele', '.jsx', '.tsx', '.html', '.htm', '.svg', '.md', '.mermaid'];
 export const ACCEPTED_INPUT_ATTR = ACCEPTED_EXTS.join(',') + ',text/plain';
@@ -22,9 +23,22 @@ function looksLikeArtifact(file: File): boolean {
   return ACCEPTED_EXTS.some((ext) => name.endsWith(ext));
 }
 
+function newLocalId(): string {
+  // Fast, unique-enough for a single browser's IDB. Uses crypto.randomUUID
+  // when available (modern browsers), falls back to a hex-from-randoms.
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
- * Read a local file, hand it to the Viewer as a blob URL. Shared by both the
- * document-level drop handler and any explicit file pickers.
+ * Open a local file in the Viewer. We save the source content to IDB under a
+ * stable `local:<id>` URL — the iframe gets a fresh blob URL synthesised on
+ * each open, which means the entry survives reloads and can be re-opened
+ * from the library long after this document is gone (blob URLs would die
+ * with the document that created them).
  */
 export async function openFileInViewer(file: File, navigate: NavigateFunction): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!looksLikeArtifact(file)) {
@@ -34,10 +48,28 @@ export async function openFileInViewer(file: File, navigate: NavigateFunction): 
     return { ok: false, error: `That file is over ${MAX_FILE_BYTES / 1024} KB — Stele artifacts are usually much smaller.` };
   }
   try {
-    const text = await file.text();
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    navigate(`/view?src=${encodeURIComponent(url)}`);
+    const source = await file.text();
+    const id = newLocalId();
+    await localArtifactPut({ id, source, filename: file.name });
+    const src = `${LOCAL_SCHEME}${id}`;
+    navigate(`/view?src=${encodeURIComponent(src)}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Same as openFileInViewer but for a synthetic source string (e.g. an
+ * artifact the Pair generator just built in memory). Saves to IDB, navigates
+ * to a `local:<id>` URL.
+ */
+export async function openSourceInViewer(source: string, filename: string, navigate: NavigateFunction): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const id = newLocalId();
+    await localArtifactPut({ id, source, filename });
+    const src = `${LOCAL_SCHEME}${id}`;
+    navigate(`/view?src=${encodeURIComponent(src)}`);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

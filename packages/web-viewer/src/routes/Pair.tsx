@@ -12,6 +12,7 @@
 
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { openFileInViewer, openSourceInViewer } from '../components/DropToOpen';
 
 const SELF_HOST_URL = 'https://github.com/stele-app/stele#run-your-own-signaling';
 const ECDH_PARAMS: EcKeyImportParams = { name: 'ECDH', namedCurve: 'P-256' };
@@ -263,16 +264,6 @@ function downloadFile(filename: string, contents: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/**
- * Hand the artifact source to the Viewer route via a blob URL. The blob URL
- * lives as long as this document does — SPA nav to /view doesn't unload it,
- * so the Viewer can fetch() it the same way it'd fetch a remote artifact.
- */
-function blobUrlForSource(source: string): string {
-  const blob = new Blob([source], { type: 'text/plain;charset=utf-8' });
-  return URL.createObjectURL(blob);
-}
-
 interface Generated {
   selfName: string;
   partnerName: string;
@@ -290,24 +281,17 @@ export default function PairGenerator() {
   const [openError, setOpenError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const openInViewer = (source: string) => {
-    const url = blobUrlForSource(source);
-    navigate(`/view?src=${encodeURIComponent(url)}`);
+  const openInViewer = async (source: string, filename: string) => {
+    setOpenError(null);
+    const result = await openSourceInViewer(source, filename, navigate);
+    if (!result.ok) setOpenError(result.error);
   };
 
   const handleFilePicked = async (file: File | null | undefined) => {
     setOpenError(null);
     if (!file) return;
-    if (file.size > 256 * 1024) {
-      setOpenError('That file is over 256 KB — paired chat artifacts are tiny. Are you sure it\'s the right file?');
-      return;
-    }
-    try {
-      const text = await file.text();
-      openInViewer(text);
-    } catch (err) {
-      setOpenError(err instanceof Error ? err.message : String(err));
-    }
+    const result = await openFileInViewer(file, navigate);
+    if (!result.ok) setOpenError(result.error);
   };
 
   const handleGenerate = async () => {
@@ -446,7 +430,7 @@ export default function PairGenerator() {
               <DownloadCard who="Partner" file={generated.b} />
             </div>
             <button
-              onClick={() => openInViewer(generated.a.source)}
+              onClick={() => openInViewer(generated.a.source, generated.a.filename)}
               style={{
                 width: '100%',
                 marginTop: 12,

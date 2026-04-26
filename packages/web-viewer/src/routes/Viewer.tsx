@@ -25,19 +25,32 @@ import {
 } from '@stele/runtime';
 import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
-import { libraryUpsert } from '../idb';
+import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
 type FetchState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ok'; source: string; kind_: 'jsx' | 'tsx' | 'html'; viaProxy: boolean }
+  | { kind: 'ok'; source: string; kind_: 'jsx' | 'tsx' | 'html'; viaProxy: boolean; localFilename?: string }
   | { kind: 'err'; message: string; reason: FetchErrReason };
 
 const PROXY_URL: string | undefined = import.meta.env.VITE_PROXY_URL;
 
-async function fetchArtifact(src: string): Promise<{ source: string; contentType: string | null; viaProxy: boolean }> {
+async function fetchArtifact(src: string): Promise<{ source: string; contentType: string | null; viaProxy: boolean; localFilename?: string }> {
+  // local:<id> — the artifact was opened from a local file (drop-to-open or
+  // Pair generator) and its source lives in IndexedDB. Read directly; never
+  // hit the network or the proxy. The library re-uses the local: src as its
+  // primary key, so re-opening from the library round-trips through here.
+  if (src.startsWith(LOCAL_SCHEME)) {
+    const id = src.slice(LOCAL_SCHEME.length);
+    const local = await localArtifactGet(id);
+    if (!local) {
+      throw new Error('This artifact was opened locally but its content is no longer in the browser. Drag the file in again to re-open it.');
+    }
+    return { source: local.source, contentType: null, viaProxy: false, localFilename: local.filename };
+  }
+
   // Try direct first — permissive sources (GitHub raw, jsDelivr, CDNs) work without
   // the proxy and stay fast. If the browser rejects the request before a response
   // arrives (TypeError), fall through to the proxy.
@@ -71,8 +84,11 @@ async function fetchArtifact(src: string): Promise<{ source: string; contentType
   }
 }
 
-function detectKind(url: string, contentType: string | null): 'jsx' | 'tsx' | 'html' {
-  const ext = url.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
+function detectKind(url: string, contentType: string | null, localFilename?: string): 'jsx' | 'tsx' | 'html' {
+  // For local: artifacts the URL is just a synthetic id, so the filename has
+  // the real extension we should detect from.
+  const source = localFilename ?? url;
+  const ext = source.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
   if (ext === 'tsx') return 'tsx';
   if (ext === 'jsx' || ext === 'stele') return 'jsx';
   if (ext === 'html' || ext === 'htm') return 'html';
@@ -126,10 +142,10 @@ export default function Viewer() {
 
     (async () => {
       try {
-        const { source, contentType, viaProxy } = await fetchArtifact(src);
+        const { source, contentType, viaProxy, localFilename } = await fetchArtifact(src);
         if (cancelled) return;
-        const kind_ = detectKind(src, contentType);
-        setFetchState({ kind: 'ok', source, kind_, viaProxy });
+        const kind_ = detectKind(src, contentType, localFilename);
+        setFetchState({ kind: 'ok', source, kind_, viaProxy, localFilename });
       } catch (err) {
         if (cancelled) return;
         const e = err as Error & { httpStatus?: number; proxy?: boolean };
@@ -252,7 +268,9 @@ export default function Viewer() {
   // still works without persistence.
   useEffect(() => {
     if (!src || fetchState.kind !== 'ok' || parseErr) return;
-    const title = manifest?.name || filenameFromUrl(src);
+    // For local: artifacts the URL is a synthetic id — fall back to the
+    // captured filename when the manifest doesn't supply a name.
+    const title = manifest?.name || fetchState.localFilename || filenameFromUrl(src);
     libraryUpsert({
       src,
       title,

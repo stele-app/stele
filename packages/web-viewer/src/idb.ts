@@ -18,10 +18,19 @@
  */
 
 const DB_NAME = 'stele-web';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_STORAGE = 'storage';
 const STORE_PERMISSIONS = 'permissions';
 const STORE_LIBRARY = 'library';
+/**
+ * Local-artifact source content. When a user drops a .stele file in
+ * (DropToOpen) or picks a file via Pair / Landing, we save the content
+ * here and give it a synthetic `local:<id>` src URL. Library entries can
+ * then reference local files with a stable id — the blob URL the iframe
+ * uses gets regenerated fresh on each open.
+ */
+const STORE_LOCAL = 'local-artifacts';
+export const LOCAL_SCHEME = 'local:';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -42,6 +51,10 @@ function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_LIBRARY)) {
         const lib = db.createObjectStore(STORE_LIBRARY, { keyPath: 'src' });
         lib.createIndex('lastOpenedAt', 'lastOpenedAt');
+      }
+      // v3 stores
+      if (!db.objectStoreNames.contains(STORE_LOCAL)) {
+        db.createObjectStore(STORE_LOCAL, { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -187,7 +200,10 @@ async function clearStore(name: string): Promise<void> {
   await txComplete(tx);
 }
 
-export const clearLibrary     = () => clearStore(STORE_LIBRARY);
+/** Clear the library AND any locally-stored artifact source it referenced. */
+export const clearLibrary     = async () => {
+  await Promise.all([clearStore(STORE_LIBRARY), clearStore(STORE_LOCAL)]);
+};
 export const clearStorage     = () => clearStore(STORE_STORAGE);
 export const clearPermissions = () => clearStore(STORE_PERMISSIONS);
 
@@ -245,7 +261,39 @@ export async function libraryList(): Promise<LibraryEntry[]> {
 
 export async function libraryDelete(src: string): Promise<void> {
   const db = await open();
+  // If the entry is a local artifact, drop its source content too so it
+  // doesn't linger in IDB once the library reference is gone.
+  if (src.startsWith(LOCAL_SCHEME)) {
+    const id = src.slice(LOCAL_SCHEME.length);
+    const tx = db.transaction([STORE_LIBRARY, STORE_LOCAL], 'readwrite');
+    tx.objectStore(STORE_LIBRARY).delete(src);
+    tx.objectStore(STORE_LOCAL).delete(id);
+    await txComplete(tx);
+    return;
+  }
   const tx = db.transaction(STORE_LIBRARY, 'readwrite');
   tx.objectStore(STORE_LIBRARY).delete(src);
   await txComplete(tx);
+}
+
+// ── Local artifacts ───────────────────────────────────────────────────
+
+export interface LocalArtifact {
+  id: string;
+  source: string;
+  filename: string;
+  createdAt: number;
+}
+
+export async function localArtifactPut(entry: Omit<LocalArtifact, 'createdAt'>): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(STORE_LOCAL, 'readwrite');
+  tx.objectStore(STORE_LOCAL).put({ ...entry, createdAt: Date.now() } satisfies LocalArtifact);
+  await txComplete(tx);
+}
+
+export async function localArtifactGet(id: string): Promise<LocalArtifact | undefined> {
+  const db = await open();
+  const tx = db.transaction(STORE_LOCAL, 'readonly');
+  return promisify<LocalArtifact | undefined>(tx.objectStore(STORE_LOCAL).get(id));
 }
