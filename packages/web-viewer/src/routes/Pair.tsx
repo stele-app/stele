@@ -42,6 +42,23 @@ function generatePairingId(): string {
   return `stele-pair-${hex}`;
 }
 
+/**
+ * 6-char hex code derived from the pairing-id + sorted public keys.
+ * Both halves of the pair compute the same value (sort ensures order-independence)
+ * — so users on both ends can read it aloud and confirm they're talking to the
+ * right person, not an impostor with a copied file.
+ */
+async function computeFingerprint(pairingId: string, pubA: string, pubB: string): Promise<string> {
+  const sorted = [pubA, pubB].sort();
+  const data = new TextEncoder().encode(`${pairingId}|${sorted[0]}|${sorted[1]}`);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .slice(0, 3)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
 /** Slug-safe filename component from a free-text name. */
 function slug(s: string): string {
   return s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'pair';
@@ -52,11 +69,13 @@ function buildArtifactSource(opts: {
   partnerName: string;
   pairName: string;
   pairingId: string;
+  fingerprint: string;
   privateKey: string;
   partnerPublicKey: string;
 }): string {
   const description =
-    `Paired chat between ${opts.selfName} and ${opts.partnerName}. Open this file and have ${opts.partnerName} open theirs at the same time. ` +
+    `Paired chat between ${opts.selfName} and ${opts.partnerName}. ` +
+    `Both files together unlock the conversation; the file IS the secret, so don't share with anyone you wouldn't want in the conversation. ` +
     `Messages travel end-to-end-encrypted over a WebRTC data channel — the signaling server only sees the SDP envelope.`;
 
   return `/**
@@ -74,12 +93,17 @@ import { useEffect, useRef, useState } from 'react';
 
 const ME = ${JSON.stringify(opts.selfName)};
 const PARTNER = ${JSON.stringify(opts.partnerName)};
+const SAFETY_CODE = ${JSON.stringify(opts.fingerprint)};
 
 export default function PairChat() {
   const [status, setStatus] = useState('not connected');
   const [lines, setLines] = useState([]);
   const [draft, setDraft] = useState('');
+  const [hasConnected, setHasConnected] = useState(false);
+  const [unexpectedDrop, setUnexpectedDrop] = useState(false);
   const connRef = useRef(null);
+  const closingRef = useRef(false);
+  const hasConnectedRef = useRef(false);
 
   const addLine = (from, text) => {
     setLines((prev) => [...prev, { from, text, ts: Date.now() }]);
@@ -94,7 +118,21 @@ export default function PairChat() {
       if (cancelled) { conn.close(); return; }
       connRef.current = conn;
       setStatus(conn.initialStatus || 'connecting…');
-      conn.onStatusChange((s) => { if (!cancelled) setStatus(s); });
+      conn.onStatusChange((s) => {
+        if (cancelled) return;
+        setStatus(s);
+        if (s === 'connected') {
+          setHasConnected(true);
+          hasConnectedRef.current = true;
+          setUnexpectedDrop(false);
+        }
+        // We were connected and now aren't — and *we* didn't close. Could be
+        // partner closed their tab, network blip, or someone else opened a copy
+        // of one of the files and stole the session. Surface the possibility.
+        if ((s === 'disconnected' || s === 'error') && hasConnectedRef.current && !closingRef.current) {
+          setUnexpectedDrop(true);
+        }
+      });
       conn.onMessage((data) => { if (!cancelled) addLine('them', data); });
     }).catch((err) => {
       if (cancelled) return;
@@ -104,6 +142,7 @@ export default function PairChat() {
 
     return () => {
       cancelled = true;
+      closingRef.current = true;
       try { connRef.current && connRef.current.close(); } catch (e) { /* swallow */ }
     };
   }, []);
@@ -124,14 +163,24 @@ export default function PairChat() {
 
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', maxWidth: 560, margin: '40px auto', padding: '0 20px', color: '#1e293b' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
         <h1 style={{ fontSize: 22, margin: 0 }}>Pair chat — {ME}</h1>
         <StatusPill status={status} />
       </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, fontSize: 11, color: '#64748b', fontFamily: 'ui-monospace, monospace' }}>
+        <span>Safety code: <strong style={{ color: '#0f172a', letterSpacing: '0.08em' }}>{SAFETY_CODE}</strong></span>
+        <span style={{ fontSize: 10 }}>both screens should match</span>
+      </div>
+
+      {unexpectedDrop && (
+        <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', color: '#78350f', padding: '10px 12px', borderRadius: 8, fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+          <strong>Connection ended.</strong> Common: partner closed their tab, or a network blip. Less common but worth knowing: if someone else opened a copy of either file, they'd take over the session this way. If you didn't expect the drop and you've shared a file with anyone besides {PARTNER}, regenerate the pair.
+        </div>
+      )}
+
       <p style={{ color: '#64748b', fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
         Open the partner artifact ({PARTNER}'s file) in another window or device.
-        Both sides must be open at the same time to handshake. End-to-end encryption uses an
-        ECDH-derived AES-GCM key — the Stele signaling server only sees the SDP envelope.
+        Both files together unlock the conversation; treat the file like a Discord invite or a 1Password secret — anyone with it can be you in this chat.
       </p>
 
       <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, height: 320, overflowY: 'auto', padding: 12, background: '#f8fafc', marginBottom: 12 }}>
@@ -268,6 +317,7 @@ export default function PairGenerator() {
     try {
       const [kpA, kpB] = await Promise.all([generateKeyPair(), generateKeyPair()]);
       const pairingId = generatePairingId();
+      const fingerprint = await computeFingerprint(pairingId, kpA.publicKey, kpB.publicKey);
       const safeA = aName.trim() || 'Person A';
       const safeB = bName.trim() || 'Person B';
       // Both files share this name so the conversation reads identically in
@@ -281,6 +331,7 @@ export default function PairGenerator() {
         partnerName: safeB,
         pairName,
         pairingId,
+        fingerprint,
         privateKey: kpA.privateKey,
         partnerPublicKey: kpB.publicKey,
       });
@@ -289,6 +340,7 @@ export default function PairGenerator() {
         partnerName: safeA,
         pairName,
         pairingId,
+        fingerprint,
         privateKey: kpB.privateKey,
         partnerPublicKey: kpA.publicKey,
       });
@@ -474,10 +526,16 @@ export default function PairGenerator() {
             About this demo
           </h2>
           <p style={{ margin: '0 0 10px' }}>
-            The signaling server behind this page runs on Cloudflare's free tier. It's generous, not unlimited — if usage spikes past those limits, I'll pause the demo until I can throttle abuse. I'm not paying open-ended cloud bills for someone else's spam.
+            <strong style={{ color: '#e2e8f0' }}>The file is the secret.</strong> Each artifact carries an ECDH private key plus the partner's public key — together they derive the same AES-GCM key and encrypt every message end-to-end. The signaling server only sees SDP envelopes; ISPs only see DTLS-encrypted WebRTC; nobody in the middle reads the chat.
+          </p>
+          <p style={{ margin: '0 0 10px' }}>
+            But this also means: anyone holding either file can <em>be</em> that person in the chat. Treat the file like a Discord invite or a 1Password vault key — don't share it with someone you wouldn't want in the conversation. If you think a file's been compromised, regenerate the pair. The chat shows a 6-character safety code on both screens; if those don't match, you're not talking to who you think you are.
+          </p>
+          <p style={{ margin: '0 0 10px' }}>
+            The signaling server behind this page runs on Cloudflare's free tier — generous, not unlimited. If usage spikes past those limits I'll pause the demo until I can throttle abuse. I'm not paying open-ended cloud bills for someone else's spam.
           </p>
           <p style={{ margin: 0 }}>
-            The architecture doesn't depend on me, though. Every paired Stele artifact declares its own signaling server in its manifest. Spin up your own Cloudflare Worker (free, ~10 minutes —{' '}
+            The architecture doesn't depend on me. Every paired Stele artifact declares its own signaling server in its manifest. Spin up your own Cloudflare Worker (free, ~10 minutes —{' '}
             <a href={SELF_HOST_URL} target="_blank" rel="noopener" style={{ color: '#fcd34d', textDecoration: 'underline' }}>
               instructions
             </a>
