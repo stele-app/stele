@@ -6,6 +6,7 @@ import Viewer from './routes/Viewer';
 import Library from './routes/Library';
 import Settings from './routes/Settings';
 import Pair from './routes/Pair';
+import ShareTarget from './routes/ShareTarget';
 import DropToOpen from './components/DropToOpen';
 
 const rootEl = document.getElementById('root');
@@ -21,6 +22,7 @@ createRoot(rootEl).render(
         <Route path="/library" element={<Library />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/pair" element={<Pair />} />
+        <Route path="/share-target" element={<ShareTarget />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,
