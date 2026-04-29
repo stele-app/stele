@@ -36,6 +36,8 @@ const SPECIFIER_TO_FILE: Record<string, string> = {
   'xlsx':               'xlsx.umd.js',
   'tone':               'tone.umd.js',
   'tone/build/Tone':    'tone.umd.js',
+  'pdf-lib':            'pdf-lib.umd.js',
+  'pdfjs-dist':         'pdfjs-dist.umd.js',
 };
 
 /** Core files always loaded (order matters) */

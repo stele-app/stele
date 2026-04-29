@@ -144,6 +144,45 @@ const PREBUILT: Record<string, string> = {
   'plotly.js-dist-min': 'plotly.js-dist-min/plotly.min.js',
   'xlsx': 'xlsx/dist/xlsx.mini.min.js',
   'tone': 'tone/build/Tone.js',
+  'pdf-lib': 'pdf-lib/dist/pdf-lib.min.js',
+};
+
+// Packages that need custom assembly — read multiple files and stitch them.
+// Used for pdfjs-dist, which ships pdf.min.js + pdf.worker.min.js separately
+// and we need to inline both so the artifact gets a worker without any
+// external fetch.
+const CUSTOM: Record<string, { global: string; build: () => string }> = {
+  'pdfjs-dist': {
+    global: 'pdfjsLib',
+    build: () => {
+      const main = readFileSync(
+        join(VENDOR_SRC, 'pdfjs-dist/build/pdf.min.js'),
+        'utf-8'
+      );
+      const worker = readFileSync(
+        join(VENDOR_SRC, 'pdfjs-dist/build/pdf.worker.min.js'),
+        'utf-8'
+      );
+      // pdf.min.js is a UMD that ends up assigning to window.pdfjsLib
+      // (via globalThis['pdfjs-dist/build/pdf']). After it loads, build
+      // an in-memory blob URL for the worker so getDocument() can spawn
+      // it without ever fetching from the network. CSP allows blob:
+      // workers via worker-src 'self' blob:.
+      return `(function(){
+${main}
+try {
+  var __pdfjsWorkerSrc = ${JSON.stringify(worker)};
+  var __pdfjsWorkerBlob = new Blob([__pdfjsWorkerSrc], { type: 'application/javascript' });
+  var __pdfjs = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+  if (__pdfjs) {
+    window.pdfjsLib = __pdfjs;
+    __pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(__pdfjsWorkerBlob);
+  }
+} catch (e) { console.warn('[pdfjs] worker setup failed', e); }
+})();
+`;
+    },
+  },
 };
 
 async function main() {
@@ -162,12 +201,14 @@ async function main() {
   }
 
   // Copy pre-built bundles
+  const PREBUILT_GLOBALS: Record<string, string> = {
+    'plotly.js-dist-min': 'Plotly',
+    'xlsx': 'XLSX',
+    'tone': 'Tone',
+    'pdf-lib': 'PDFLib',
+  };
   for (const [pkg, sourceFile] of Object.entries(PREBUILT)) {
-    const spec: VendorSpec = pkg === 'plotly.js-dist-min'
-      ? { global: 'Plotly' }
-      : pkg === 'xlsx'
-        ? { global: 'XLSX' }
-        : { global: 'Tone' };
+    const spec: VendorSpec = { global: PREBUILT_GLOBALS[pkg] };
     console.log(`  ${pkg} → window.${spec.global} (prebuilt)`);
     try {
       const code = await copyPrebuilt(pkg, spec, sourceFile);
@@ -176,6 +217,20 @@ async function main() {
       console.log(`    ✓ ${filename} (${(code.length / 1024).toFixed(1)}KB)`);
     } catch (err) {
       console.error(`    ✗ Failed to copy ${pkg}:`, err);
+      process.exit(1);
+    }
+  }
+
+  // Custom assembly (pdfjs-dist needs main + worker stitched)
+  for (const [pkg, { global, build }] of Object.entries(CUSTOM)) {
+    console.log(`  ${pkg} → window.${global} (custom)`);
+    try {
+      const code = build();
+      const filename = pkg.replace(/[/.]/g, '-') + '.umd.js';
+      writeVendorFile(filename, code);
+      console.log(`    ✓ ${filename} (${(code.length / 1024).toFixed(1)}KB)`);
+    } catch (err) {
+      console.error(`    ✗ Failed to assemble ${pkg}:`, err);
       process.exit(1);
     }
   }

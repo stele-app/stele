@@ -48,6 +48,8 @@ const VENDOR_GLOBALS: Record<string, string> = {
   'xlsx':               'XLSX',
   'mammoth':            'mammoth',
   'lodash':             '_',
+  'pdf-lib':            'PDFLib',
+  'pdfjs-dist':         'pdfjsLib',
 };
 
 /**
