@@ -148,9 +148,13 @@ const PREBUILT: Record<string, string> = {
 };
 
 // Packages that need custom assembly — read multiple files and stitch them.
-// Used for pdfjs-dist, which ships pdf.min.js + pdf.worker.min.js separately
-// and we need to inline both so the artifact gets a worker without any
-// external fetch.
+// Used for pdfjs-dist, which ships pdf.min.js + pdf.worker.min.js separately.
+// We can't spawn a real Worker in the null-origin sandbox iframe (blob:null/
+// URLs are rejected as worker sources), so we load BOTH scripts as regular
+// main-thread scripts. pdf.worker.min.js is a UMD that, when run outside a
+// Worker context, registers itself as window.pdfjsWorker. pdf.js then
+// detects that global at getDocument() time and skips the Worker spawn,
+// running its work on the main thread.
 const CUSTOM: Record<string, { global: string; build: () => string }> = {
   'pdfjs-dist': {
     global: 'pdfjsLib',
@@ -163,22 +167,20 @@ const CUSTOM: Record<string, { global: string; build: () => string }> = {
         join(VENDOR_SRC, 'pdfjs-dist/build/pdf.worker.min.js'),
         'utf-8'
       );
-      // pdf.min.js is a UMD that ends up assigning to window.pdfjsLib
-      // (via globalThis['pdfjs-dist/build/pdf']). After it loads, build
-      // an in-memory blob URL for the worker so getDocument() can spawn
-      // it without ever fetching from the network. CSP allows blob:
-      // workers via worker-src 'self' blob:.
+      // Order matters: worker first (so pdfjsWorker global exists), then main
+      // (which probes for it on init). workerSrc still needs a non-empty
+      // string for pdf.js to consider workers configured at all — the value
+      // never gets fetched because pdfjsWorker is found first.
       return `(function(){
+try { ${worker} } catch (e) { console.warn('[pdfjs] worker bundle threw', e); }
 ${main}
 try {
-  var __pdfjsWorkerSrc = ${JSON.stringify(worker)};
-  var __pdfjsWorkerBlob = new Blob([__pdfjsWorkerSrc], { type: 'application/javascript' });
   var __pdfjs = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
   if (__pdfjs) {
     window.pdfjsLib = __pdfjs;
-    __pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(__pdfjsWorkerBlob);
+    __pdfjs.GlobalWorkerOptions.workerSrc = 'inline';
   }
-} catch (e) { console.warn('[pdfjs] worker setup failed', e); }
+} catch (e) { console.warn('[pdfjs] init failed', e); }
 })();
 `;
     },
