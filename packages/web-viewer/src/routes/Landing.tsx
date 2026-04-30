@@ -11,9 +11,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { openFileInViewer, ACCEPTED_INPUT_ATTR } from '../components/DropToOpen';
 
 const RAW_BASE = 'https://raw.githubusercontent.com/stele-app/stele/main/examples';
+const PUBLIC_BASE = 'https://raw.githubusercontent.com/stele-app/artifact-examples-/main';
 
 const DEMOS: Array<{ emoji: string; name: string; tagline: string; src: string }> = [
   { emoji: '⛵', name: 'Battleship',     tagline: 'Classic game, single file', src: `${RAW_BASE}/battleship.jsx` },
+  { emoji: '✍️', name: 'The Signer',    tagline: 'Drop a PDF, click to sign + date, download', src: `${PUBLIC_BASE}/sign-pdf.tsx` },
   { emoji: '🎒', name: 'Year 2 Mission HQ', tagline: 'Homework — results to teacher, or PDF fallback', src: `${RAW_BASE}/year2-homework.jsx` },
   { emoji: '🦺', name: 'Site Prestart',  tagline: 'Tradie daily check, GPS + photos', src: `${RAW_BASE}/site-prestart.tsx` },
   { emoji: '🔐', name: 'Paired crypto',  tagline: 'ECDH-derived shared key', src: `${RAW_BASE}/pair-crypto-test.tsx` },
