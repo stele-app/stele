@@ -1,0 +1,19 @@
+{
+  "name": "@stele/tic-tac-toe-server",
+  "version": "0.1.0",
+  "description": "Stele tic-tac-toe — Cloudflare Worker hosting one Durable-Object-backed room. Serves the rooms artifact at examples/tic-tac-toe.tsx. Single-purpose by design: dedicated to this artifact, not a shared multi-tenant rooms service.",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev --port 8789",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -b"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250131.0",
+    "typescript": "~6.0.2",
+    "wrangler": "^3.108.0"
+  }
+}

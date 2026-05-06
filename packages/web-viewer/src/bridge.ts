@@ -18,7 +18,9 @@ import {
   encryptWithSharedKey,
   decryptWithSharedKey,
   connectPair,
+  connectRoom,
   type PairConnection,
+  type RoomConnection,
 } from '@stele/runtime';
 
 const DEFAULT_SIGNALING_URL = 'https://stele-signaling.unscramble-apiworkersdev.workers.dev';
@@ -41,6 +43,8 @@ export interface BridgeOptions {
   pairingId?: string | null;
   /** Manifest.signaling override for Archetype C. Falls back to DEFAULT_SIGNALING_URL. */
   signalingUrl?: string | null;
+  /** Manifest.server (wss://) for the 'rooms' archetype. Enables `room.connect` RPC. */
+  roomServerUrl?: string | null;
 }
 
 function storageScope(artifactId: string, shared: boolean): string {
@@ -69,6 +73,14 @@ function isSafeExternalUrl(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+function randomUserId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let hex = '';
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+  return `u_${hex}`;
 }
 
 async function serverFetch(
@@ -140,6 +152,25 @@ export function attachBridge(
   const closePairConn = () => {
     try { pairConn?.close(); } catch { /* swallow */ }
     pairConn = null;
+  };
+
+  let roomConn: RoomConnection | null = null;
+  const closeRoomConn = () => {
+    try { roomConn?.close(); } catch { /* swallow */ }
+    roomConn = null;
+  };
+
+  // Stable anonymous identity for the rooms archetype, persisted per-artifact.
+  // Each artifact gets its own userId so two different rooms-games don't share
+  // identity. The artifact never sees this directly — only the displayName it
+  // chose flows through to other clients.
+  const ROOM_USER_KEY = '__stele_room_user_id__';
+  const getOrCreateRoomUserId = async (): Promise<string> => {
+    const existing = await idb.storageGet(artifactId, artifactId, ROOM_USER_KEY);
+    if (typeof existing === 'string' && existing) return existing;
+    const fresh = randomUserId();
+    await idb.storagePut(artifactId, artifactId, ROOM_USER_KEY, fresh);
+    return fresh;
   };
 
   const portHandler = async (pev: MessageEvent) => {
@@ -238,6 +269,75 @@ export function attachBridge(
           reply(null);
           break;
         }
+        case 'room.connect': {
+          if (!options.roomServerUrl) {
+            reply(null, 'room.connect is only available for rooms artifacts with a declared server');
+            break;
+          }
+          if (roomConn) {
+            // Already connected — return whatever snapshot we have.
+            const snap = roomConn.lastSnapshot;
+            reply({ state: snap, you: snap?.you ?? null });
+            break;
+          }
+          const userId = await getOrCreateRoomUserId();
+          const displayName = String(msg.params?.displayName ?? '').trim() || `Player ${userId.slice(2, 6)}`;
+          const conn = connectRoom({
+            serverUrl: options.roomServerUrl,
+            userId,
+            displayName,
+          });
+          roomConn = conn;
+          // Push subsequent snapshots / errors to the artifact via events.
+          conn.onSnapshot((snap) => {
+            port?.postMessage({ kind: 'event', topic: 'room.snapshot', payload: snap });
+          });
+          conn.onError((err) => {
+            port?.postMessage({ kind: 'event', topic: 'room.error', payload: err });
+          });
+          // Resolve the RPC when either the first snapshot arrives or the
+          // socket errors out — gives the artifact an initial state in one
+          // round trip.
+          await new Promise<void>((resolve, reject) => {
+            const t = setTimeout(() => {
+              cleanup();
+              resolve();
+            }, 5000);
+            const cleanup = () => {
+              clearTimeout(t);
+              offSnap();
+              offStatus();
+            };
+            const offSnap = conn.onSnapshot(() => { cleanup(); resolve(); });
+            const offStatus = conn.onStatusChange((s) => {
+              if (s === 'error' || s === 'disconnected') {
+                cleanup();
+                reject(new Error(`room.connect: ${s}`));
+              }
+            });
+          });
+          reply({ state: conn.lastSnapshot, you: conn.lastSnapshot?.you ?? null });
+          break;
+        }
+        case 'room.send': {
+          if (!roomConn) { reply(null, 'room.send: not connected (call room.connect first)'); break; }
+          roomConn.send(msg.params?.intent);
+          reply(null);
+          break;
+        }
+        case 'room.setOnDeck': {
+          if (!roomConn) { reply(null, 'room.setOnDeck: not connected'); break; }
+          roomConn.setOnDeck(!!msg.params?.value);
+          reply(null);
+          break;
+        }
+        case 'room.leave': {
+          if (!roomConn) { reply(null); break; }
+          roomConn.leave();
+          closeRoomConn();
+          reply(null);
+          break;
+        }
         default:
           reply(null, `Unknown RPC method: ${msg.method}`);
       }
@@ -270,6 +370,7 @@ export function attachBridge(
   return () => {
     window.removeEventListener('message', windowHandler);
     closePairConn();
+    closeRoomConn();
     port?.close();
     port = null;
   };

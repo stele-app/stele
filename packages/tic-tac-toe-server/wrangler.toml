@@ -1,0 +1,21 @@
+name = "stele-tic-tac-toe"
+main = "src/index.ts"
+compatibility_date = "2026-04-25"
+
+# Durable Object: ONE RoomDO instance for the whole server. The artifact is
+# single-room by design (no lobby), so we always route to idFromName('main').
+# WebSocket Hibernation API keeps connection state across DO eviction.
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "RoomDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"]
+
+# Production deployment: point a route (e.g. tic-tac-toe.stele.au) at this
+# worker when ready. Until then, dev runs on wrangler dev :8789.
+#
+# [[routes]]
+# pattern = "tic-tac-toe.stele.au/*"
+# custom_domain = true

@@ -301,6 +301,7 @@ export default function Viewer() {
           : null,
         pairingId: manifest?.archetype === 'paired' ? manifest.pairing_id ?? null : null,
         signalingUrl: manifest?.archetype === 'paired' ? manifest.signaling ?? null : null,
+        roomServerUrl: manifest?.archetype === 'rooms' ? manifest.server ?? null : null,
       },
     );
     return cleanup;
@@ -531,6 +532,13 @@ const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; co
     color: '#c4b5fd',
     border: '#4c1d95',
     tooltip: 'Linked to a partner artifact. Both are required.',
+  },
+  'rooms': {
+    label: 'rooms',
+    background: '#3a200f',
+    color: '#fdba74',
+    border: '#9a3412',
+    tooltip: 'Multi-party room hosted on a server. Players + spectators.',
   },
 };
 

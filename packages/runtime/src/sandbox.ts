@@ -217,6 +217,25 @@ const BOOT_SCRIPT = `
         });
       },
     },
+    // Multi-party room (Archetype: rooms). connect() opens a server-mediated
+    // session; send() submits a game intent; onSnapshot receives the canonical
+    // state after every server-side mutation.
+    room: {
+      connect: function(opts) {
+        opts = opts || {};
+        return rpc('room.connect', { displayName: opts.displayName }).then(function(initial) {
+          return {
+            send: function(intent) { return rpc('room.send', { intent: intent }); },
+            setOnDeck: function(value) { return rpc('room.setOnDeck', { value: !!value }); },
+            leave: function() { return rpc('room.leave', {}); },
+            onSnapshot: function(handler) { return subscribe('room.snapshot', handler); },
+            onError: function(handler) { return subscribe('room.error', handler); },
+            initialState: initial && initial.state,
+            you: initial && initial.you,
+          };
+        });
+      },
+    },
   };
 
   // Intercept external links — open in OS default browser

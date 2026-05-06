@@ -1,0 +1,458 @@
+/**
+ * RoomDO — single Durable Object instance hosting the one tic-tac-toe room.
+ *
+ * Uses the WebSocket Hibernation API so connection state survives DO eviction.
+ * Room state persists to DO storage on every mutation (it's tiny — ~few hundred
+ * bytes). On wake, the constructor reloads state from storage; if all clients
+ * have left, storage is cleared.
+ *
+ * The "rooms" / "King of the Hill" logic here is the reusable scaffold —
+ * future games (Connect Four, etc.) ship a different GameModule but reuse the
+ * seat / queue / role-routing / reconnect-grace machinery in this file.
+ */
+
+import type {
+  ClientMessage, GameModule, Participant, Phase, RoomSnapshot,
+  SeatIndex, ServerMessage,
+} from './types.ts';
+import { BOT_ID, PROTOCOL } from './types.ts';
+import { ticTacToe, type TttState, type TttIntent } from './game.ts';
+
+interface SeatHolder {
+  /** Bot is identified by BOT_ID; humans by their anonymous userId. */
+  id: string;
+  displayName: string;
+  /** Set when their socket has dropped. Used for the reconnect grace timer. */
+  disconnectedAt?: number;
+}
+
+interface PersistedState {
+  seats: Array<SeatHolder | null>;       // length 2
+  /** Humans currently in the room but not seated. Order = join order. */
+  watching: Participant[];
+  /** Subset of watching, ordered queue. */
+  onDeck: string[];
+  phase: Phase;
+  game: TttState | null;                  // null when phase === 'waiting' or 'finished'
+  lastWinner: SeatIndex | 'draw' | null;
+}
+
+/** Per-WebSocket payload, persisted via serializeAttachment. */
+interface WsAttachment {
+  userId: string;
+  displayName: string;
+}
+
+const RECONNECT_GRACE_MS = 30_000;
+const BOT_THINK_MS = 600;
+const POST_GAME_PAUSE_MS = 2000;
+const MAX_DISPLAY_NAME = 40;
+
+const STORAGE_KEY = 'state';
+
+const game: GameModule<TttState, TttIntent> = ticTacToe;
+
+export class RoomDO implements DurableObject {
+  private state: DurableObjectState;
+  private room: PersistedState = freshState();
+  private loaded = false;
+  /** Pending setTimeouts for bot moves / post-game pauses. */
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+
+  constructor(state: DurableObjectState) {
+    this.state = state;
+    // Hydrate state from storage before any request runs.
+    this.state.blockConcurrencyWhile(async () => {
+      const saved = await this.state.storage.get<PersistedState>(STORAGE_KEY);
+      if (saved) this.room = saved;
+      this.loaded = true;
+    });
+  }
+
+  // ── HTTP entry — only for WebSocket upgrades ────────────────────────
+
+  async fetch(request: Request): Promise<Response> {
+    const upgrade = request.headers.get('Upgrade');
+    if (upgrade?.toLowerCase() !== 'websocket') {
+      return new Response('Expected WebSocket upgrade', { status: 426 });
+    }
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    // Hibernation API: server-side WS is owned by the runtime, not us.
+    this.state.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ── WebSocket handlers (Hibernation API) ────────────────────────────
+
+  async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer): Promise<void> {
+    if (typeof msg !== 'string') return this.sendError(ws, 'bad-frame', 'binary frames not accepted');
+
+    let parsed: ClientMessage;
+    try { parsed = JSON.parse(msg) as ClientMessage; }
+    catch { return this.sendError(ws, 'bad-json', 'invalid JSON'); }
+
+    const att = ws.deserializeAttachment() as WsAttachment | null;
+
+    // hello must come first; everything else requires an attachment.
+    if (parsed.type === 'hello') return this.handleHello(ws, parsed);
+    if (!att) return this.sendError(ws, 'no-hello', 'send hello first');
+
+    switch (parsed.type) {
+      case 'set-on-deck': return this.handleSetOnDeck(att.userId, parsed.value);
+      case 'intent':      return this.handleIntent(ws, att.userId, parsed.payload);
+      case 'leave':       return this.handleLeave(ws, att.userId);
+      default:
+        return this.sendError(ws, 'unknown-type', `unknown message type`);
+    }
+  }
+
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    const att = ws.deserializeAttachment() as WsAttachment | null;
+    if (!att) return;
+    await this.handleDisconnect(att.userId);
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    return this.webSocketClose(ws);
+  }
+
+  // ── Reconnect grace alarm ───────────────────────────────────────────
+
+  async alarm(): Promise<void> {
+    if (!this.loaded) return;
+    const now = Date.now();
+    let mutated = false;
+    for (let i = 0; i < 2; i++) {
+      const s = this.room.seats[i];
+      if (!s || s.id === BOT_ID || s.disconnectedAt === undefined) continue;
+      if (now - s.disconnectedAt >= RECONNECT_GRACE_MS) {
+        // Grace expired — treat as forfeit.
+        if (this.room.phase === 'playing') {
+          const winner = (1 - i) as SeatIndex;
+          this.endGame(winner);
+        } else {
+          this.room.seats[i] = null;
+        }
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      this.assignSeats();
+      await this.persistAndBroadcast();
+    }
+    this.scheduleGraceAlarm();
+  }
+
+  // ── Message handlers ────────────────────────────────────────────────
+
+  private async handleHello(ws: WebSocket, msg: { userId: string; displayName: string }): Promise<void> {
+    const userId = String(msg.userId ?? '').slice(0, 128);
+    const displayName = (String(msg.displayName ?? '').trim() || 'Anon').slice(0, MAX_DISPLAY_NAME);
+    if (!userId || userId === BOT_ID) {
+      return this.sendError(ws, 'bad-userId', 'userId is required and may not be __bot__');
+    }
+    ws.serializeAttachment({ userId, displayName } satisfies WsAttachment);
+
+    // If this userId already holds a seat (reconnect within grace), restore it.
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx !== null) {
+      const s = this.room.seats[seatIdx]!;
+      s.disconnectedAt = undefined;
+      s.displayName = displayName;
+    } else {
+      // Drop any previous attachment for this userId on a different ws.
+      this.removeFromRoom(userId);
+      this.addHumanToRoom({ id: userId, displayName });
+    }
+
+    this.assignSeats();
+    await this.persistAndBroadcast();
+  }
+
+  private async handleSetOnDeck(userId: string, value: boolean): Promise<void> {
+    if (this.findSeat(userId) !== null) return; // seated players don't queue
+    const inRoom = this.room.watching.some((p) => p.id === userId);
+    if (!inRoom) return;
+    const idx = this.room.onDeck.indexOf(userId);
+    if (value && idx === -1) this.room.onDeck.push(userId);
+    if (!value && idx !== -1) this.room.onDeck.splice(idx, 1);
+    await this.persistAndBroadcast();
+  }
+
+  private async handleIntent(ws: WebSocket, userId: string, payload: unknown): Promise<void> {
+    if (this.room.phase !== 'playing' || this.room.game === null) {
+      return this.sendError(ws, 'not-playing', 'no game in progress');
+    }
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx === null) return this.sendError(ws, 'not-seated', 'spectators cannot move');
+    const intent = payload as TttIntent;
+    const v = game.validate(this.room.game, seatIdx, intent);
+    if (!v.ok) return this.sendError(ws, 'bad-move', v.reason);
+
+    this.room.game = game.apply(this.room.game, seatIdx, intent);
+    const out = game.outcome(this.room.game);
+    if (out.phase === 'finished') {
+      this.endGame(out.winner!);
+    } else {
+      this.maybeScheduleBotMove();
+    }
+    await this.persistAndBroadcast();
+  }
+
+  private async handleLeave(ws: WebSocket, userId: string): Promise<void> {
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx !== null && this.room.phase === 'playing') {
+      // Voluntary leave mid-game = forfeit.
+      this.endGame((1 - seatIdx) as SeatIndex);
+    }
+    this.removeFromRoom(userId);
+    this.assignSeats();
+    await this.persistAndBroadcast();
+    try { ws.close(1000, 'left'); } catch { /* ignore */ }
+  }
+
+  private async handleDisconnect(userId: string): Promise<void> {
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx !== null) {
+      // Hold the seat through the reconnect grace window.
+      this.room.seats[seatIdx]!.disconnectedAt = Date.now();
+      this.scheduleGraceAlarm();
+    } else {
+      this.removeFromRoom(userId);
+    }
+    this.assignSeats();
+    await this.persistAndBroadcast();
+
+    // If nobody's left, wipe storage so the next connection starts clean.
+    if (this.isRoomEmpty()) {
+      this.room = freshState();
+      await this.state.storage.deleteAll();
+    }
+  }
+
+  // ── Room state machinery ────────────────────────────────────────────
+
+  /**
+   * After any change to who's in the room, recompute seats by KoH rules.
+   * Idempotent — safe to call after every mutation.
+   */
+  private assignSeats(): void {
+    // 1. Fill empty seats from on-deck.
+    for (let i = 0; i < 2; i++) {
+      if (this.room.seats[i] !== null) continue;
+      const nextId = this.room.onDeck.shift();
+      if (!nextId) continue;
+      const p = this.takeFromWatching(nextId);
+      if (p) this.room.seats[i] = { id: p.id, displayName: p.displayName };
+    }
+    // 2. Bot yields to any human in watching (humans always trump bot).
+    for (let i = 0; i < 2; i++) {
+      const s = this.room.seats[i];
+      if (!s || s.id !== BOT_ID) continue;
+      if (this.room.watching.length === 0) continue;
+      const p = this.room.watching.shift()!;
+      this.room.seats[i] = { id: p.id, displayName: p.displayName };
+    }
+    // 3. With exactly 1 human in the room, fill remaining empties with the bot.
+    const humanCount = this.countHumans();
+    if (humanCount === 1) {
+      for (let i = 0; i < 2; i++) {
+        if (this.room.seats[i] === null) {
+          this.room.seats[i] = { id: BOT_ID, displayName: 'CPU' };
+        }
+      }
+    }
+    // 4. Phase transitions.
+    const seated = this.room.seats.filter((s) => s !== null).length;
+    if (seated === 2 && this.room.phase !== 'playing') {
+      this.startGame();
+    } else if (seated < 2 && this.room.phase === 'playing') {
+      // A player vanished without grace expiring — shouldn't happen often, but
+      // bail safely: end the current game and wait.
+      this.room.phase = 'waiting';
+      this.room.game = null;
+    } else if (seated < 2) {
+      this.room.phase = 'waiting';
+      this.room.game = null;
+    }
+  }
+
+  private startGame(): void {
+    // Alternate who goes first based on lastWinner: winner moves first next.
+    const firstSeat: SeatIndex =
+      this.room.lastWinner === 0 ? 0 :
+      this.room.lastWinner === 1 ? 1 : 0;
+    this.room.game = game.init(firstSeat);
+    this.room.phase = 'playing';
+    this.maybeScheduleBotMove();
+  }
+
+  private endGame(winner: SeatIndex | 'draw'): void {
+    this.room.phase = 'finished';
+    this.room.lastWinner = winner;
+
+    if (winner === 'draw') {
+      // Draw: both stay seated. Players in on-deck wait their turn.
+    } else {
+      // Loser drops to watching; on-deck top promotes (handled by assignSeats).
+      const loserIdx = (1 - winner) as SeatIndex;
+      const loser = this.room.seats[loserIdx];
+      if (loser && loser.id !== BOT_ID) {
+        this.room.watching.push({ id: loser.id, displayName: loser.displayName });
+      }
+      this.room.seats[loserIdx] = null;
+    }
+
+    // Brief pause so spectators can read the result, then start the next game.
+    this.scheduleTimer(() => {
+      this.assignSeats();
+      void this.persistAndBroadcast();
+    }, POST_GAME_PAUSE_MS);
+  }
+
+  private maybeScheduleBotMove(): void {
+    if (this.room.phase !== 'playing' || this.room.game === null) return;
+    const turn = game.currentTurn(this.room.game);
+    if (turn === null) return;
+    const seat = this.room.seats[turn];
+    if (!seat || seat.id !== BOT_ID || !game.bot) return;
+
+    this.scheduleTimer(() => {
+      if (this.room.phase !== 'playing' || this.room.game === null) return;
+      const stillTurn = game.currentTurn(this.room.game);
+      if (stillTurn !== turn) return;
+      const intent = game.bot!.think(this.room.game, turn);
+      const v = game.validate(this.room.game, turn, intent);
+      if (!v.ok) return;
+      this.room.game = game.apply(this.room.game, turn, intent);
+      const out = game.outcome(this.room.game);
+      if (out.phase === 'finished') {
+        this.endGame(out.winner!);
+      } else {
+        this.maybeScheduleBotMove();
+      }
+      void this.persistAndBroadcast();
+    }, BOT_THINK_MS);
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────
+
+  private findSeat(userId: string): SeatIndex | null {
+    if (this.room.seats[0]?.id === userId) return 0;
+    if (this.room.seats[1]?.id === userId) return 1;
+    return null;
+  }
+
+  private countHumans(): number {
+    let n = 0;
+    for (const s of this.room.seats) if (s && s.id !== BOT_ID) n++;
+    return n + this.room.watching.length;
+  }
+
+  private isRoomEmpty(): boolean {
+    return this.countHumans() === 0;
+  }
+
+  private takeFromWatching(id: string): Participant | null {
+    const idx = this.room.watching.findIndex((p) => p.id === id);
+    if (idx === -1) return null;
+    return this.room.watching.splice(idx, 1)[0]!;
+  }
+
+  private addHumanToRoom(p: Participant): void {
+    // First open seat goes to them; otherwise to watching.
+    for (let i = 0; i < 2; i++) {
+      const s = this.room.seats[i];
+      if (s === null || s.id === BOT_ID) {
+        // If a seat is bot-held mid-game, the human waits in watching;
+        // assignSeats() will move them in when the game ends. If phase is
+        // waiting (between games), they take it now.
+        if (s === null || this.room.phase === 'waiting') {
+          this.room.seats[i] = { id: p.id, displayName: p.displayName };
+          return;
+        }
+      }
+    }
+    if (!this.room.watching.some((w) => w.id === p.id)) {
+      this.room.watching.push(p);
+    }
+  }
+
+  private removeFromRoom(userId: string): void {
+    for (let i = 0; i < 2; i++) {
+      if (this.room.seats[i]?.id === userId) this.room.seats[i] = null;
+    }
+    this.room.watching = this.room.watching.filter((p) => p.id !== userId);
+    this.room.onDeck = this.room.onDeck.filter((id) => id !== userId);
+  }
+
+  private scheduleGraceAlarm(): void {
+    let next = Infinity;
+    for (const s of this.room.seats) {
+      if (s && s.id !== BOT_ID && s.disconnectedAt !== undefined) {
+        next = Math.min(next, s.disconnectedAt + RECONNECT_GRACE_MS);
+      }
+    }
+    if (next !== Infinity) void this.state.storage.setAlarm(next);
+  }
+
+  private scheduleTimer(fn: () => void, ms: number): void {
+    const t = setTimeout(() => {
+      this.timers.delete(t);
+      try { fn(); } catch (e) { console.error('[room-do] timer error', e); }
+    }, ms);
+    this.timers.add(t);
+  }
+
+  // ── Send / broadcast / persist ──────────────────────────────────────
+
+  private snapshotFor(userId: string): RoomSnapshot {
+    const seatIdx = this.findSeat(userId);
+    const role: 'player' | 'spectator' = seatIdx !== null ? 'player' : 'spectator';
+    return {
+      protocol: PROTOCOL,
+      phase: this.room.phase,
+      seats: this.room.seats.map((s) => {
+        if (!s) return null;
+        if (s.id === BOT_ID) return { id: BOT_ID, displayName: 'CPU' as const };
+        return { id: s.id, displayName: s.displayName };
+      }),
+      watching: this.room.watching.map((p) => ({ id: p.id, displayName: p.displayName })),
+      onDeck: [...this.room.onDeck],
+      game: this.room.game,
+      lastWinner: this.room.lastWinner,
+      you: seatIdx !== null ? { id: userId, role, seat: seatIdx } : { id: userId, role },
+      serverNow: Date.now(),
+    };
+  }
+
+  private send(ws: WebSocket, msg: ServerMessage): void {
+    try { ws.send(JSON.stringify(msg)); }
+    catch (e) { console.error('[room-do] send failed', e); }
+  }
+
+  private sendError(ws: WebSocket, code: string, message: string): void {
+    this.send(ws, { type: 'error', code, message });
+  }
+
+  private async persistAndBroadcast(): Promise<void> {
+    await this.state.storage.put(STORAGE_KEY, this.room);
+    for (const ws of this.state.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | null;
+      if (!att) continue;
+      this.send(ws, { type: 'snapshot', state: this.snapshotFor(att.userId) });
+    }
+  }
+}
+
+function freshState(): PersistedState {
+  return {
+    seats: [null, null],
+    watching: [],
+    onDeck: [],
+    phase: 'waiting',
+    game: null,
+    lastWinner: null,
+  };
+}

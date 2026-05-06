@@ -215,7 +215,7 @@ export interface LibraryEntry {
   /** Display name from the manifest, or a filename fallback. */
   title: string;
   /** Archetype from the manifest, or 'self-contained' if no manifest. */
-  archetype: 'self-contained' | 'client-view' | 'paired';
+  archetype: 'self-contained' | 'client-view' | 'paired' | 'rooms';
   /** Optional server host string, for client-view entries. */
   serverHost?: string;
   addedAt: number;

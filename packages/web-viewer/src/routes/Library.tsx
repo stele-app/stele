@@ -16,6 +16,7 @@ const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; co
   'self-contained': { label: 'self-contained', background: '#0f2a1f', color: '#86efac', border: '#14532d' },
   'client-view':    { label: 'client view',    background: '#0f1e3a', color: '#93c5fd', border: '#1e3a8a' },
   'paired':         { label: 'paired',         background: '#1f0f3a', color: '#c4b5fd', border: '#4c1d95' },
+  'rooms':          { label: 'rooms',          background: '#3a200f', color: '#fdba74', border: '#9a3412' },
 };
 
 function formatTime(ts: number): string {

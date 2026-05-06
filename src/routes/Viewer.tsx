@@ -588,6 +588,13 @@ const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; co
     border: '#4c1d95',
     tooltip: 'Linked to a partner artifact. Both are required.',
   },
+  'rooms': {
+    label: 'rooms',
+    background: '#3a200f',
+    color: '#fdba74',
+    border: '#9a3412',
+    tooltip: 'Multi-party room hosted on a server. Players + spectators.',
+  },
 };
 
 /** Strip protocol and path from a URL, showing only the host. Falls back to the raw string on parse failure. */

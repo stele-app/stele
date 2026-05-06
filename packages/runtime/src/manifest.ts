@@ -36,12 +36,13 @@ export type Capability =
 /**
  * An artifact's runtime archetype:
  * - 'self-contained' — runs offline, no server dependency (default)
- * - 'client-view'    — view of data authoritative on a server; needs `server:` field
+ * - 'client-view'    — view of data authoritative on a server; needs `server:` (https://)
  * - 'paired'         — cryptographically linked to a partner artifact
+ * - 'rooms'          — joins a shared room (>2 participants) on a server; needs `server:` (wss://)
  */
-export type Archetype = 'self-contained' | 'client-view' | 'paired';
+export type Archetype = 'self-contained' | 'client-view' | 'paired' | 'rooms';
 
-const ARCHETYPES: readonly Archetype[] = ['self-contained', 'client-view', 'paired'];
+const ARCHETYPES: readonly Archetype[] = ['self-contained', 'client-view', 'paired', 'rooms'];
 
 export interface Manifest {
   name: string;
@@ -49,7 +50,7 @@ export interface Manifest {
   author?: string;
   description?: string;
   archetype: Archetype;
-  /** Required when archetype === 'client-view'. HTTPS origin of the authoritative server. */
+  /** Required when archetype is 'client-view' (https://) or 'rooms' (wss://). */
   server?: string;
   /** Required when archetype === 'paired'. Opaque identifier shared with the partner artifact. */
   pairing_id?: string;
@@ -166,6 +167,16 @@ function isHttpsUrl(raw: string): boolean {
   }
 }
 
+/** Validates HTTPS or WSS — used by `server:` since `rooms` uses WebSocket. */
+function isHttpsOrWssUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return (u.protocol === 'https:' || u.protocol === 'wss:') && !!u.host;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Parses a manifest from artifact source code.
  *
@@ -214,8 +225,11 @@ export function parseManifest(source: string): Manifest | null {
         manifest.archetype = value as Archetype;
         break;
       case 'server':
-        if (!isHttpsUrl(value)) {
-          throw new Error(`Manifest: 'server' must be an https:// URL, got '${value}'`);
+        // Scheme validity depends on archetype (checked after the parse loop):
+        // 'client-view' wants https://, 'rooms' wants wss://. We accept both
+        // here so the per-archetype check can give a more useful error.
+        if (!isHttpsOrWssUrl(value)) {
+          throw new Error(`Manifest: 'server' must be an https:// or wss:// URL, got '${value}'`);
         }
         manifest.server = value;
         break;
@@ -261,8 +275,18 @@ export function parseManifest(source: string): Manifest | null {
     if (!manifest.server) {
       throw new Error(`Manifest: archetype 'client-view' requires a 'server' field (https:// URL)`);
     }
+    if (!manifest.server.startsWith('https://')) {
+      throw new Error(`Manifest: archetype 'client-view' 'server' must be an https:// URL, got '${manifest.server}'`);
+    }
+  } else if (manifest.archetype === 'rooms') {
+    if (!manifest.server) {
+      throw new Error(`Manifest: archetype 'rooms' requires a 'server' field (wss:// URL)`);
+    }
+    if (!manifest.server.startsWith('wss://')) {
+      throw new Error(`Manifest: archetype 'rooms' 'server' must be a wss:// URL, got '${manifest.server}'`);
+    }
   } else if (manifest.server) {
-    throw new Error(`Manifest: 'server' is only valid for archetype 'client-view'`);
+    throw new Error(`Manifest: 'server' is only valid for archetype 'client-view' or 'rooms'`);
   }
 
   if (manifest.archetype === 'paired') {
