@@ -46,7 +46,9 @@ interface WsAttachment {
 
 const RECONNECT_GRACE_MS = 30_000;
 const BOT_THINK_MS = 600;
-const POST_GAME_PAUSE_MS = 2000;
+// Long enough for the win-line draw, the chip pulse, and the confetti to play
+// before the next round resets the board.
+const POST_GAME_PAUSE_MS = 3500;
 
 const STORAGE_KEY = 'state';
 

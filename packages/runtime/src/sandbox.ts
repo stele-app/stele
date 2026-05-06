@@ -219,7 +219,9 @@ const BOOT_SCRIPT = `
     },
     // Multi-party room (Archetype: rooms). connect() opens a server-mediated
     // session; send() submits a game intent; onSnapshot receives the canonical
-    // state after every server-side mutation.
+    // state after every server-side mutation. onStatusChange fires for
+    // connecting / connected / reconnecting / disconnected so the artifact can
+    // surface a transient "reconnecting" indicator while the runtime retries.
     room: {
       connect: function(opts) {
         opts = opts || {};
@@ -230,6 +232,7 @@ const BOOT_SCRIPT = `
             leave: function() { return rpc('room.leave', {}); },
             onSnapshot: function(handler) { return subscribe('room.snapshot', handler); },
             onError: function(handler) { return subscribe('room.error', handler); },
+            onStatusChange: function(handler) { return subscribe('room.status', handler); },
             initialState: initial && initial.state,
             you: initial && initial.you,
           };

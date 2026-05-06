@@ -288,12 +288,15 @@ export function attachBridge(
             displayName,
           });
           roomConn = conn;
-          // Push subsequent snapshots / errors to the artifact via events.
+          // Push subsequent snapshots / errors / status to the artifact via events.
           conn.onSnapshot((snap) => {
             port?.postMessage({ kind: 'event', topic: 'room.snapshot', payload: snap });
           });
           conn.onError((err) => {
             port?.postMessage({ kind: 'event', topic: 'room.error', payload: err });
+          });
+          conn.onStatusChange((s) => {
+            port?.postMessage({ kind: 'event', topic: 'room.status', payload: s });
           });
           // Resolve the RPC when either the first snapshot arrives or the
           // socket errors out — gives the artifact an initial state in one

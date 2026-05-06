@@ -8,18 +8,26 @@
  * mutates, and broadcasts a fresh snapshot. Spectator/player role-routing
  * lives entirely on the server.
  *
+ * Reconnect:
+ *   The socket can drop silently (mobile network handoff, browser tab throttle,
+ *   transient CF Worker restart). The server holds the seat for ~30s on drop;
+ *   we exploit that by automatically reconnecting under the hood with an
+ *   exponential backoff, re-sending `hello` with the same userId. Clients see
+ *   `reconnecting` status during the gap and a fresh snapshot once back.
+ *
+ *   `close()` and a normal-1000 server close are treated as intentional and
+ *   stop the loop. Anything else (1006, errors, abnormal close) triggers retry.
+ *
  * v0 limitations:
  * - One room per server (no lobby/multi-room API yet).
  * - JSON frames only.
- * - No automatic reconnect on the client; if the socket drops, the artifact
- *   sees a disconnected status and decides what to do. Server-side seat
- *   reconnect-grace handles the "artifact will retry shortly" case.
  */
 
 export type RoomStatus =
   | 'idle'
   | 'connecting'
   | 'connected'
+  | 'reconnecting'
   | 'disconnected'
   | 'error';
 
@@ -68,10 +76,11 @@ interface InternalState {
   errorHandlers: Set<(err: { code: string; message: string }) => void>;
 }
 
+const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
+
 export function connectRoom(opts: RoomConnectOptions): RoomConnection {
   const { serverUrl, userId, displayName } = opts;
   const path = opts.path ?? '/play';
-  // serverUrl is wss://host[:port]; append path. Tolerate trailing slash.
   const url = serverUrl.replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`);
 
   const state: InternalState = {
@@ -82,6 +91,11 @@ export function connectRoom(opts: RoomConnectOptions): RoomConnection {
     errorHandlers: new Set(),
   };
 
+  let ws: WebSocket | null = null;
+  let stopped = false;
+  let retryAttempt = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
   const setStatus = (s: RoomStatus) => {
     if (state.status === s) return;
     state.status = s;
@@ -90,40 +104,79 @@ export function connectRoom(opts: RoomConnectOptions): RoomConnection {
     }
   };
 
-  setStatus('connecting');
-  const ws = new WebSocket(url);
+  const open = () => {
+    if (stopped) return;
+    setStatus(retryAttempt === 0 ? 'connecting' : 'reconnecting');
 
-  ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ type: 'hello', userId, displayName }));
-    setStatus('connected');
-  });
+    ws = new WebSocket(url);
 
-  ws.addEventListener('message', (ev) => {
-    let msg: unknown;
-    try { msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); }
-    catch { return; }
-    if (!msg || typeof msg !== 'object') return;
-    const m = msg as Record<string, unknown>;
-    if (m.type === 'snapshot' && m.state && typeof m.state === 'object') {
-      const snap = m.state as RoomSnapshot;
-      state.lastSnapshot = snap;
-      for (const h of state.snapshotHandlers) {
-        try { h(snap); } catch { /* swallow */ }
+    ws.addEventListener('open', () => {
+      if (stopped) return;
+      retryAttempt = 0;
+      // Re-send hello with the same userId — server matches it to any held
+      // seat within the reconnect grace window and restores the role.
+      ws!.send(JSON.stringify({ type: 'hello', userId, displayName }));
+      setStatus('connected');
+    });
+
+    ws.addEventListener('message', (ev) => {
+      let msg: unknown;
+      try { msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); }
+      catch { return; }
+      if (!msg || typeof msg !== 'object') return;
+      const m = msg as Record<string, unknown>;
+      if (m.type === 'snapshot' && m.state && typeof m.state === 'object') {
+        const snap = m.state as RoomSnapshot;
+        state.lastSnapshot = snap;
+        for (const h of state.snapshotHandlers) {
+          try { h(snap); } catch { /* swallow */ }
+        }
+      } else if (m.type === 'error') {
+        const err = { code: String(m.code ?? 'error'), message: String(m.message ?? '') };
+        for (const h of state.errorHandlers) {
+          try { h(err); } catch { /* swallow */ }
+        }
       }
-    } else if (m.type === 'error') {
-      const err = { code: String(m.code ?? 'error'), message: String(m.message ?? '') };
-      for (const h of state.errorHandlers) {
-        try { h(err); } catch { /* swallow */ }
-      }
-    }
-  });
+    });
 
-  ws.addEventListener('close', () => setStatus('disconnected'));
-  ws.addEventListener('error', () => setStatus('error'));
+    const onCloseOrError = (ev: Event) => {
+      if (stopped) return;
+      // Distinguish a clean server-initiated close (don't retry) from a drop.
+      // 1000 = normal closure. Anything else (1006 = abnormal, transport error,
+      // proxy idle timeout, etc.) means the server still expects us back.
+      const isCleanClose = ev.type === 'close' && (ev as CloseEvent).code === 1000;
+      if (isCleanClose) {
+        setStatus('disconnected');
+        return;
+      }
+      // Schedule a reconnect.
+      const delay = RECONNECT_BACKOFF_MS[Math.min(retryAttempt, RECONNECT_BACKOFF_MS.length - 1)];
+      retryAttempt += 1;
+      setStatus('reconnecting');
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        open();
+      }, delay);
+    };
+
+    ws.addEventListener('close', onCloseOrError);
+    ws.addEventListener('error', onCloseOrError);
+  };
+
+  open();
 
   const sendJson = (payload: unknown) => {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
+  };
+
+  const stop = () => {
+    stopped = true;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    try { ws?.close(1000, 'client'); } catch { /* swallow */ }
+    ws = null;
+    setStatus('disconnected');
   };
 
   return {
@@ -132,10 +185,8 @@ export function connectRoom(opts: RoomConnectOptions): RoomConnection {
 
     send(intent) { sendJson({ type: 'intent', payload: intent }); },
     setOnDeck(value) { sendJson({ type: 'set-on-deck', value: !!value }); },
-    leave() { sendJson({ type: 'leave' }); },
-    close() {
-      try { ws.close(1000, 'client'); } catch { /* swallow */ }
-    },
+    leave() { sendJson({ type: 'leave' }); stop(); },
+    close() { stop(); },
 
     onSnapshot(h) { state.snapshotHandlers.add(h); return () => state.snapshotHandlers.delete(h); },
     onStatusChange(h) { state.statusHandlers.add(h); return () => state.statusHandlers.delete(h); },

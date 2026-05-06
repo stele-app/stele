@@ -36,12 +36,15 @@ interface RoomSnapshot {
   serverNow: number;
 }
 
+type RoomStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
+
 interface RoomSession {
   send(intent: { column: number }): Promise<void>;
   setOnDeck(value: boolean): Promise<void>;
   leave(): Promise<void>;
   onSnapshot(h: (snap: RoomSnapshot) => void): () => void;
   onError(h: (err: { code: string; message: string }) => void): () => void;
+  onStatusChange(h: (status: RoomStatus) => void): () => void;
   initialState: RoomSnapshot | null;
   you: RoomSnapshot['you'] | null;
 }
@@ -107,6 +110,7 @@ function Chip({
 export default function ConnectFour() {
   const [snap, setSnap] = useState<RoomSnapshot | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [status, setStatus] = useState<RoomStatus>('connecting');
   const sessionRef = useRef<RoomSession | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
@@ -135,6 +139,8 @@ export default function ConnectFour() {
       if (session.initialState) setSnap(session.initialState);
       session.onSnapshot((s) => { if (!cancelled) setSnap(s); });
       session.onError((e) => { if (!cancelled) setErrMsg(`${e.code}: ${e.message}`); });
+      session.onStatusChange?.((s) => { if (!cancelled) setStatus(s); });
+      setStatus('connected');
     }).catch((err) => {
       if (cancelled) return;
       setErrMsg(`Couldn't connect: ${String(err.message ?? err)}`);
@@ -160,7 +166,10 @@ export default function ConnectFour() {
         ) : !snap ? (
           <JoiningScreen />
         ) : (
-          <GameScreen snap={snap} session={sessionRef.current} />
+          <>
+            <GameScreen snap={snap} session={sessionRef.current} />
+            {(status === 'reconnecting' || status === 'disconnected') && <ReconnectingBadge />}
+          </>
         )}
       </div>
     </>
@@ -209,6 +218,8 @@ function Keyframes() {
         100% { stroke-dashoffset: 0;  opacity: 1; }
       }
       .winline { stroke-dasharray: 100; animation: c4-line-in 0.5s ease-out 0.2s both; }
+      @keyframes c4-spin { to { transform: rotate(360deg); } }
+      .reconnect-spin { animation: c4-spin 1.1s linear infinite; }
     `}</style>
   );
 }
@@ -238,7 +249,13 @@ function GameScreen({ snap, session }: { snap: RoomSnapshot; session: RoomSessio
   return (
     <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6">
       <Header phase={snap.phase} role={yourRole} />
-      <Seats seats={snap.seats} yourSeat={yourSeat} game={snap.game} lastWinner={snap.lastWinner} />
+      <Seats
+        seats={snap.seats}
+        yourSeat={yourSeat}
+        game={snap.game}
+        phase={snap.phase}
+        lastWinner={snap.lastWinner}
+      />
       <Board snap={snap} isMyTurn={isMyTurn} onColumnClick={onColumnClick} />
       <SideBars
         snap={snap}
@@ -287,11 +304,12 @@ function Pill({ label, dot = false, muted = false }: { label: string; dot?: bool
 }
 
 function Seats({
-  seats, yourSeat, game, lastWinner,
+  seats, yourSeat, game, phase, lastWinner,
 }: {
   seats: (Participant | null)[];
   yourSeat?: SeatIndex;
   game: C4GameState | null;
+  phase: Phase;
   lastWinner?: SeatIndex | 'draw' | null;
 }) {
   return (
@@ -300,8 +318,12 @@ function Seats({
         const seatIdx = i as SeatIndex;
         const s = seats[i];
         const isYou = yourSeat === seatIdx;
-        const isTurn = game?.turn === seatIdx;
-        const isWinner = lastWinner === seatIdx;
+        // lastWinner persists across rounds (it picks who opens the next game),
+        // so the "won" / "to move" labels MUST be gated on phase or the next
+        // round's UI inherits stale state.
+        const isTurn = phase === 'playing' && game?.turn === seatIdx;
+        const isWinner = phase === 'finished' && lastWinner === seatIdx;
+        const isLoser = phase === 'finished' && lastWinner !== 'draw' && lastWinner != null && lastWinner !== seatIdx;
         const c = CHIP[seatIdx];
         return (
           <div
@@ -326,8 +348,8 @@ function Seats({
                 {s ? (s.id === BOT_ID ? 'CPU' : s.displayName) : <span style={{ color: C.textMuted }}>empty seat</span>}
                 {isYou && <span className="ml-1.5 text-[12px] font-medium" style={{ color: C.accent }}>(you)</span>}
               </div>
-              <div className="text-[11px] font-semibold uppercase mt-0.5" style={{ letterSpacing: '0.14em', color: isWinner ? C.win : isTurn ? C.accent : C.textMuted }}>
-                {isWinner ? 'Won' : isTurn ? `${c.name} to move…` : c.name}
+              <div className="text-[11px] font-semibold uppercase mt-0.5" style={{ letterSpacing: '0.14em', color: isWinner ? C.win : isLoser ? '#ff8aa8' : isTurn ? C.accent : C.textMuted }}>
+                {isWinner ? 'Won' : isLoser ? 'Lost' : isTurn ? `${c.name} to move…` : c.name}
               </div>
             </div>
           </div>
@@ -438,10 +460,12 @@ function Board({
             );
           })}
 
-          {/* Winning-line overlay (drawn in board coordinates, scaled with the board). */}
+          {/* Winning-line overlay. z-10 keeps it on top of the chips; the
+              chips themselves are also pulsing via .chip-won so the line is
+              extra emphasis rather than the only signal. */}
           {winLine && snap.lastWinner != null && snap.lastWinner !== 'draw' && (
             <svg
-              className="absolute inset-0 pointer-events-none"
+              className="absolute inset-0 pointer-events-none z-10"
               viewBox={`0 0 ${COLS} ${ROWS}`}
               preserveAspectRatio="none"
             >
@@ -452,9 +476,9 @@ function Board({
                 x2={winLine[3][0] + 0.5}
                 y2={ROWS - 1 - winLine[3][1] + 0.5}
                 stroke={C.win}
-                strokeWidth="0.18"
+                strokeWidth="0.32"
                 strokeLinecap="round"
-                style={{ filter: `drop-shadow(0 0 0.3px ${C.win}) drop-shadow(0 0 0.6px ${C.win})` }}
+                style={{ filter: `drop-shadow(0 0 1px ${C.win}) drop-shadow(0 0 3px ${C.win})` }}
               />
             </svg>
           )}
@@ -637,6 +661,25 @@ function JoiningScreen() {
           Joining the room
         </div>
       </div>
+    </div>
+  );
+}
+
+function ReconnectingBadge() {
+  return (
+    <div
+      className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex items-center gap-2 px-3 py-2 rounded-full"
+      style={{
+        background: `linear-gradient(160deg, ${C.surfaceHi} 0%, ${C.surface} 100%)`,
+        border: '1px solid rgba(167,139,250,0.35)',
+        boxShadow: '0 8px 24px -8px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04) inset',
+        color: C.text,
+      }}
+    >
+      <svg className="reconnect-spin" width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M8 2a6 6 0 1 1-6 6" stroke={C.accent} strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      <span className="text-[11px] font-bold uppercase" style={{ letterSpacing: '0.16em' }}>Reconnecting…</span>
     </div>
   );
 }
