@@ -11,7 +11,7 @@
  *   principle — the runtime hosts nothing that isn't its own bundle.
  */
 
-const CACHE_NAME = 'stele-app-v1';
+const CACHE_NAME = 'stele-app-v2';
 
 self.addEventListener('install', (event) => {
   // Take over as soon as the new SW is ready.

@@ -24,6 +24,9 @@ interface SeatHolder {
   displayName: string;
   /** Set when their socket has dropped. Used for the reconnect grace timer. */
   disconnectedAt?: number;
+  /** Wall-clock when this seat was filled. Used for KoH "challenger drops" on
+   *  draw — the more recently seated player is the challenger. */
+  seatedAt: number;
 }
 
 interface PersistedState {
@@ -236,42 +239,56 @@ export class RoomDO implements DurableObject {
   /**
    * After any change to who's in the room, recompute seats by KoH rules.
    * Idempotent — safe to call after every mutation.
+   *
+   * Priority for filling an empty seat: on-deck > bot. Spectators not on-deck
+   * stay passive — they have to press "next" to play.
+   *
+   * The bot is a fallback filler so the room never stalls: as long as any
+   * human is present (seated or watching), an empty seat gets a CPU opponent
+   * and the game keeps running for whoever is seated.
    */
   private assignSeats(): void {
-    // 1. Fill empty seats from on-deck.
+    const now = Date.now();
+    // 1. Fill empty seats from on-deck (in seat order).
     for (let i = 0; i < 2; i++) {
       if (this.room.seats[i] !== null) continue;
       const nextId = this.room.onDeck.shift();
       if (!nextId) continue;
       const p = this.takeFromWatching(nextId);
-      if (p) this.room.seats[i] = { id: p.id, displayName: p.displayName };
+      if (p) this.room.seats[i] = { id: p.id, displayName: p.displayName, seatedAt: now };
     }
-    // 2. Bot yields to any human in watching (humans always trump bot).
+    // 2. Bot yields to on-deck. Anyone who explicitly opted in trumps the bot.
     for (let i = 0; i < 2; i++) {
       const s = this.room.seats[i];
       if (!s || s.id !== BOT_ID) continue;
-      if (this.room.watching.length === 0) continue;
-      const p = this.room.watching.shift()!;
-      this.room.seats[i] = { id: p.id, displayName: p.displayName };
+      const nextId = this.room.onDeck.shift();
+      if (!nextId) continue;
+      const p = this.takeFromWatching(nextId);
+      if (p) this.room.seats[i] = { id: p.id, displayName: p.displayName, seatedAt: now };
     }
-    // 3. With exactly 1 human in the room, fill remaining empties with the bot.
-    const humanCount = this.countHumans();
-    if (humanCount === 1) {
+    // 3. Fill any remaining empties with the bot — but only if at least one
+    //    human is in the room (otherwise we'd seat bot-vs-bot, which is not a
+    //    game). Watching counts: a passive spectator still wants to see action.
+    const anyHumanInRoom =
+      this.room.seats.some((s) => s !== null && s.id !== BOT_ID) ||
+      this.room.watching.length > 0;
+    if (anyHumanInRoom) {
       for (let i = 0; i < 2; i++) {
         if (this.room.seats[i] === null) {
-          this.room.seats[i] = { id: BOT_ID, displayName: 'CPU' };
+          this.room.seats[i] = { id: BOT_ID, displayName: 'CPU', seatedAt: now };
         }
       }
     }
-    // 4. Phase transitions.
+    // 4. Degenerate case: both seats turned out to be bot (the lone human
+    //    just left). Clear so the room idles cleanly.
+    if (this.room.seats[0]?.id === BOT_ID && this.room.seats[1]?.id === BOT_ID) {
+      this.room.seats[0] = null;
+      this.room.seats[1] = null;
+    }
+    // 5. Phase transitions.
     const seated = this.room.seats.filter((s) => s !== null).length;
     if (seated === 2 && this.room.phase !== 'playing') {
       this.startGame();
-    } else if (seated < 2 && this.room.phase === 'playing') {
-      // A player vanished without grace expiring — shouldn't happen often, but
-      // bail safely: end the current game and wait.
-      this.room.phase = 'waiting';
-      this.room.game = null;
     } else if (seated < 2) {
       this.room.phase = 'waiting';
       this.room.game = null;
@@ -292,19 +309,50 @@ export class RoomDO implements DurableObject {
     this.room.phase = 'finished';
     this.room.lastWinner = winner;
 
-    if (winner === 'draw') {
-      // Draw: both stay seated. Players in on-deck wait their turn.
-    } else {
-      // Loser drops to watching; on-deck top promotes (handled by assignSeats).
+    if (winner !== 'draw') {
       const loserIdx = (1 - winner) as SeatIndex;
       const loser = this.room.seats[loserIdx];
-      if (loser && loser.id !== BOT_ID) {
-        this.room.watching.push({ id: loser.id, displayName: loser.displayName });
+      if (loser && loser.id === BOT_ID) {
+        // Bot loses: just vacate. assignSeats will refill (with a human from
+        // on-deck if any, else the bot rejoins).
+        this.room.seats[loserIdx] = null;
+      } else if (loser) {
+        // Solo human vs bot: keep them seated. The "lose → viewer" rule needs
+        // someone else to play the winner; with no other humans, dropping
+        // them just leaves the lone human watching a bot-vs-... nothing.
+        const onlyOneHuman = this.countHumans() === 1;
+        if (!onlyOneHuman) {
+          this.room.watching.push({ id: loser.id, displayName: loser.displayName });
+          this.room.seats[loserIdx] = null;
+        }
       }
-      this.room.seats[loserIdx] = null;
+    } else {
+      // KoH draw rule: the king (longer-tenured seat) keeps the throne; the
+      // challenger (more recently seated) didn't beat them, so yields to the
+      // next on-deck. Without this, two evenly-matched players can stalemate
+      // forever and the queue never advances.
+      const s0 = this.room.seats[0];
+      const s1 = this.room.seats[1];
+      if (s0 && s1) {
+        const challengerIdx: SeatIndex = s0.seatedAt > s1.seatedAt ? 0 : 1;
+        const challenger = this.room.seats[challengerIdx]!;
+        if (challenger.id !== BOT_ID) {
+          // If they're the only human, keep them seated — same reasoning as
+          // the loss branch.
+          const onlyOneHuman = this.countHumans() === 1;
+          if (!onlyOneHuman) {
+            this.room.watching.push({ id: challenger.id, displayName: challenger.displayName });
+            this.room.seats[challengerIdx] = null;
+          }
+        } else {
+          // Bot was the challenger — vacate, assignSeats refills.
+          this.room.seats[challengerIdx] = null;
+        }
+      }
     }
 
-    // Brief pause so spectators can read the result, then start the next game.
+    // Brief pause so everyone can read the result, then assignSeats() rebuilds
+    // the next matchup and startGame() flips us back to 'playing'.
     this.scheduleTimer(() => {
       this.assignSeats();
       void this.persistAndBroadcast();
@@ -361,21 +409,24 @@ export class RoomDO implements DurableObject {
   }
 
   private addHumanToRoom(p: Participant): void {
-    // First open seat goes to them; otherwise to watching.
+    // Empty seat → take it directly.
     for (let i = 0; i < 2; i++) {
-      const s = this.room.seats[i];
-      if (s === null || s.id === BOT_ID) {
-        // If a seat is bot-held mid-game, the human waits in watching;
-        // assignSeats() will move them in when the game ends. If phase is
-        // waiting (between games), they take it now.
-        if (s === null || this.room.phase === 'waiting') {
-          this.room.seats[i] = { id: p.id, displayName: p.displayName };
-          return;
-        }
+      if (this.room.seats[i] === null) {
+        this.room.seats[i] = { id: p.id, displayName: p.displayName, seatedAt: Date.now() };
+        return;
       }
     }
+    // Both seats filled. Add to watching.
     if (!this.room.watching.some((w) => w.id === p.id)) {
       this.room.watching.push(p);
+    }
+    // If a bot is currently in a seat, the new human is "promised" a seat per
+    // the spec: "When a second person joins, they automatically go in and
+    // play." Implement this by implicitly opt-ing them onto the queue —
+    // assignSeats() will swap them in for the bot at the next opportunity.
+    const botSeated = this.room.seats.some((s) => s !== null && s.id === BOT_ID);
+    if (botSeated && !this.room.onDeck.includes(p.id)) {
+      this.room.onDeck.push(p.id);
     }
   }
 

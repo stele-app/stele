@@ -106,12 +106,12 @@ export default function TicTacToe() {
 function NameForm({
   name, setName, onSubmit,
 }: { name: string; setName: (s: string) => void; onSubmit: () => void }) {
+  // Plain div + button (not <form>) — the Stele sandbox iframe doesn't grant
+  // `allow-forms`, so a form submit gets blocked. Enter-to-submit is wired
+  // directly on the input.
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
-      <form
-        onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
-        className="w-full max-w-sm space-y-4 bg-slate-900 border border-slate-800 rounded-lg p-6"
-      >
+      <div className="w-full max-w-sm space-y-4 bg-slate-900 border border-slate-800 rounded-lg p-6">
         <h1 className="text-xl font-semibold">Tic-Tac-Toe</h1>
         <p className="text-sm text-slate-400">
           Pick a display name. Open this artifact on a second device to play someone else;
@@ -121,17 +121,19 @@ function NameForm({
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
           maxLength={40}
           placeholder="Your name"
           className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 focus:border-slate-500 focus:outline-none"
         />
         <button
-          type="submit"
+          type="button"
+          onClick={onSubmit}
           className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 font-medium transition"
         >
           Enter the room
         </button>
-      </form>
+      </div>
     </div>
   );
 }
