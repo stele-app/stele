@@ -77,6 +77,11 @@ interface InternalState {
 }
 
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
+// Cap retries so a wedged tab (e.g., server quota exhausted, or persistent
+// network failure) can't burn through Cloudflare DO quota indefinitely.
+// 20 attempts × ~8s = ~3 minutes of trying before we give up and require
+// the user to manually refresh.
+const MAX_RECONNECT_ATTEMPTS = 20;
 
 export function connectRoom(opts: RoomConnectOptions): RoomConnection {
   const { serverUrl, userId, displayName } = opts;
@@ -147,6 +152,14 @@ export function connectRoom(opts: RoomConnectOptions): RoomConnection {
       const isCleanClose = ev.type === 'close' && (ev as CloseEvent).code === 1000;
       if (isCleanClose) {
         setStatus('disconnected');
+        return;
+      }
+      // Bail out after MAX_RECONNECT_ATTEMPTS so a wedged tab can't burn
+      // server quota indefinitely. The artifact's status handler can prompt
+      // the user to refresh.
+      if (retryAttempt >= MAX_RECONNECT_ATTEMPTS) {
+        stopped = true;
+        setStatus('error');
         return;
       }
       // Schedule a reconnect.

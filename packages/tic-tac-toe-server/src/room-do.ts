@@ -130,19 +130,29 @@ export class RoomDO implements DurableObject {
       const s = this.room.seats[i];
       if (!s || s.id === BOT_ID || s.disconnectedAt === undefined) continue;
       if (now - s.disconnectedAt >= RECONNECT_GRACE_MS) {
-        // Grace expired — treat as forfeit.
+        // Grace expired — player isn't coming back. Forfeit if mid-game, and
+        // FORCE-clear the seat. (endGame's "solo human stays seated through
+        // losses" rule is not appropriate here — a disconnected player has
+        // *gone*, not just lost a round. Leaving disconnectedAt set on the
+        // seat causes scheduleGraceAlarm() to schedule the next alarm in the
+        // past, which CF fires immediately — an infinite alarm loop that
+        // burns DO requests until the daily quota is exhausted.)
         if (this.room.phase === 'playing') {
           const winner = (1 - i) as SeatIndex;
           this.endGame(winner);
-        } else {
-          this.room.seats[i] = null;
         }
+        this.room.seats[i] = null;
         mutated = true;
       }
     }
     if (mutated) {
       this.assignSeats();
       await this.persistAndBroadcast();
+      if (this.isRoomEmpty()) {
+        this.room = freshState();
+        await this.state.storage.deleteAll();
+        return;
+      }
     }
     this.scheduleGraceAlarm();
   }
