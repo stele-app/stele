@@ -1,14 +1,11 @@
 /**
- * RoomDO — single Durable Object instance hosting the one tic-tac-toe room.
+ * RoomDO — single Durable Object instance hosting the one Connect Four room.
  *
- * Uses the WebSocket Hibernation API so connection state survives DO eviction.
- * Room state persists to DO storage on every mutation (it's tiny — ~few hundred
- * bytes). On wake, the constructor reloads state from storage; if all clients
- * have left, storage is cleared.
- *
- * The "rooms" / "King of the Hill" logic here is the reusable scaffold —
- * future games (Connect Four, etc.) ship a different GameModule but reuse the
- * seat / queue / role-routing / reconnect-grace machinery in this file.
+ * Same scaffold as @stele/tic-tac-toe-server's room-do.ts (KoH state machine,
+ * seat / queue / reconnect-grace, server-authoritative). The only difference
+ * is the imported GameModule. We're copy-and-modify rather than extracting a
+ * shared package — once we add a third game, the duplication will be worth a
+ * proper @stele/rooms-server-core extraction.
  */
 
 import type {
@@ -16,7 +13,7 @@ import type {
   SeatIndex, ServerMessage,
 } from './types.ts';
 import { BOT_ID, PROTOCOL } from './types.ts';
-import { ticTacToe, type TttState, type TttIntent } from './game.ts';
+import { connectFour, type C4State, type C4Intent } from './game.ts';
 import { assignDisplayName } from './names.ts';
 
 interface SeatHolder {
@@ -37,7 +34,7 @@ interface PersistedState {
   /** Subset of watching, ordered queue. */
   onDeck: string[];
   phase: Phase;
-  game: TttState | null;                  // null when phase === 'waiting' or 'finished'
+  game: C4State | null;                   // null when phase === 'waiting' or 'finished'
   lastWinner: SeatIndex | 'draw' | null;
 }
 
@@ -53,7 +50,7 @@ const POST_GAME_PAUSE_MS = 2000;
 
 const STORAGE_KEY = 'state';
 
-const game: GameModule<TttState, TttIntent> = ticTacToe;
+const game: GameModule<C4State, C4Intent> = connectFour;
 
 export class RoomDO implements DurableObject {
   private state: DurableObjectState;
@@ -211,7 +208,7 @@ export class RoomDO implements DurableObject {
     }
     const seatIdx = this.findSeat(userId);
     if (seatIdx === null) return this.sendError(ws, 'not-seated', 'spectators cannot move');
-    const intent = payload as TttIntent;
+    const intent = payload as C4Intent;
     const v = game.validate(this.room.game, seatIdx, intent);
     if (!v.ok) return this.sendError(ws, 'bad-move', v.reason);
 

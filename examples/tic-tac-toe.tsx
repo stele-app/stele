@@ -59,83 +59,37 @@ declare global {
 const MARKS = ['', 'X', 'O'] as const;
 
 export default function TicTacToe() {
-  const [name, setName] = useState<string>('');
-  const [submittedName, setSubmittedName] = useState<string | null>(null);
   const [snap, setSnap] = useState<RoomSnapshot | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const sessionRef = useRef<RoomSession | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  // Connect once a name is submitted.
+  // Auto-connect on mount. Server assigns the display name; no client prompt.
   useEffect(() => {
-    if (!submittedName) return;
     let cancelled = false;
-    setBusy(true);
 
-    window.stele.room.connect({ displayName: submittedName }).then((session) => {
+    window.stele.room.connect().then((session) => {
       if (cancelled) return;
       sessionRef.current = session;
       if (session.initialState) setSnap(session.initialState);
       session.onSnapshot((s) => { if (!cancelled) setSnap(s); });
       session.onError((e) => { if (!cancelled) setErrMsg(`${e.code}: ${e.message}`); });
-      setBusy(false);
     }).catch((err) => {
       if (cancelled) return;
       setErrMsg(`Couldn't connect: ${String(err.message ?? err)}`);
-      setBusy(false);
     });
 
     return () => { cancelled = true; sessionRef.current?.leave().catch(() => {}); };
-  }, [submittedName]);
+  }, [retryNonce]);
 
-  if (!submittedName) {
-    return <NameForm name={name} setName={setName} onSubmit={() => setSubmittedName(name.trim() || 'Anon')} />;
-  }
   if (errMsg) {
-    return <ErrorScreen message={errMsg} onRetry={() => { setErrMsg(null); setSubmittedName(null); }} />;
+    return <ErrorScreen message={errMsg} onRetry={() => { setErrMsg(null); setSnap(null); setRetryNonce((n) => n + 1); }} />;
   }
   if (!snap) {
-    return <CenteredMessage text={busy ? 'Joining the room…' : 'Loading…'} />;
+    return <CenteredMessage text="Joining the room…" />;
   }
 
   return <GameScreen snap={snap} session={sessionRef.current} />;
-}
-
-// ── Name form ───────────────────────────────────────────────────────
-
-function NameForm({
-  name, setName, onSubmit,
-}: { name: string; setName: (s: string) => void; onSubmit: () => void }) {
-  // Plain div + button (not <form>) — the Stele sandbox iframe doesn't grant
-  // `allow-forms`, so a form submit gets blocked. Enter-to-submit is wired
-  // directly on the input.
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
-      <div className="w-full max-w-sm space-y-4 bg-slate-900 border border-slate-800 rounded-lg p-6">
-        <h1 className="text-xl font-semibold">Tic-Tac-Toe</h1>
-        <p className="text-sm text-slate-400">
-          Pick a display name. Open this artifact on a second device to play someone else;
-          otherwise you'll play the CPU.
-        </p>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
-          maxLength={40}
-          placeholder="Your name"
-          className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 focus:border-slate-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={onSubmit}
-          className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 font-medium transition"
-        >
-          Enter the room
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {

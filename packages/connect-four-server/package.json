@@ -1,0 +1,19 @@
+{
+  "name": "@stele/connect-four-server",
+  "version": "0.1.0",
+  "description": "Stele Connect Four — Cloudflare Worker hosting one Durable-Object-backed room. Serves examples/connect-four.tsx. Single-purpose, dedicated to this artifact.",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev --port 8790",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -b"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250131.0",
+    "typescript": "~6.0.2",
+    "wrangler": "^3.108.0"
+  }
+}
