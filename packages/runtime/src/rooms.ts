@@ -58,6 +58,8 @@ export interface RoomConnection {
   /** Send a game intent (server validates against the GameModule). */
   send(intent: unknown): void;
   setOnDeck(value: boolean): void;
+  /** Voluntarily vacate the seat. Server moves you to watching. */
+  stepDown(): void;
   leave(): void;
   close(): void;
   readonly status: RoomStatus;
@@ -198,6 +200,7 @@ export function connectRoom(opts: RoomConnectOptions): RoomConnection {
 
     send(intent) { sendJson({ type: 'intent', payload: intent }); },
     setOnDeck(value) { sendJson({ type: 'set-on-deck', value: !!value }); },
+    stepDown() { sendJson({ type: 'step-down' }); },
     leave() { sendJson({ type: 'leave' }); stop(); },
     close() { stop(); },
 

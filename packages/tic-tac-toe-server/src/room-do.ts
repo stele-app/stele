@@ -104,6 +104,7 @@ export class RoomDO implements DurableObject {
     switch (parsed.type) {
       case 'set-on-deck': return this.handleSetOnDeck(att.userId, parsed.value);
       case 'intent':      return this.handleIntent(ws, att.userId, parsed.payload);
+      case 'step-down':   return this.handleStepDown(att.userId);
       case 'leave':       return this.handleLeave(ws, att.userId);
       default:
         return this.sendError(ws, 'unknown-type', `unknown message type`);
@@ -210,9 +211,42 @@ export class RoomDO implements DurableObject {
     const inRoom = this.room.watching.some((p) => p.id === userId);
     if (!inRoom) return;
     const idx = this.room.onDeck.indexOf(userId);
-    if (value && idx === -1) this.room.onDeck.push(userId);
+    if (value && idx === -1) {
+      this.room.onDeck.push(userId);
+      // CPU yields immediately to humans (see connect-four-server for the
+      // full reasoning).
+      const botSeated = this.room.seats.some((s) => s !== null && s.id === BOT_ID);
+      if (botSeated && this.room.phase === 'playing') {
+        this.cancelTimers();
+        this.room.phase = 'waiting';
+        this.room.game = null;
+      }
+    }
     if (!value && idx !== -1) this.room.onDeck.splice(idx, 1);
+    this.assignSeats();
     await this.persistAndBroadcast();
+  }
+
+  private async handleStepDown(userId: string): Promise<void> {
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx === null) return;
+
+    const s = this.room.seats[seatIdx]!;
+    this.room.watching.push({ id: s.id, displayName: s.displayName });
+    this.room.seats[seatIdx] = null;
+
+    this.cancelTimers();
+    this.room.phase = 'waiting';
+    this.room.game = null;
+    this.room.lastWinner = null;
+
+    this.assignSeats();
+    await this.persistAndBroadcast();
+  }
+
+  private cancelTimers(): void {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
   }
 
   private async handleIntent(ws: WebSocket, userId: string, payload: unknown): Promise<void> {

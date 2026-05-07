@@ -334,6 +334,12 @@ export function attachBridge(
           reply(null);
           break;
         }
+        case 'room.stepDown': {
+          if (!roomConn) { reply(null, 'room.stepDown: not connected'); break; }
+          roomConn.stepDown();
+          reply(null);
+          break;
+        }
         case 'room.leave': {
           if (!roomConn) { reply(null); break; }
           roomConn.leave();

@@ -120,6 +120,7 @@ export class RoomDO implements DurableObject {
     switch (parsed.type) {
       case 'set-on-deck': return this.handleSetOnDeck(att.userId, parsed.value);
       case 'intent':      return this.handleIntent(ws, att.userId, parsed.payload);
+      case 'step-down':   return this.handleStepDown(att.userId);
       case 'leave':       return this.handleLeave(ws, att.userId);
       default:
         return this.sendError(ws, 'unknown-type', `unknown message type`);
@@ -228,9 +229,48 @@ export class RoomDO implements DurableObject {
     const inRoom = this.room.watching.some((p) => p.id === userId);
     if (!inRoom) return;
     const idx = this.room.onDeck.indexOf(userId);
-    if (value && idx === -1) this.room.onDeck.push(userId);
+    if (value && idx === -1) {
+      this.room.onDeck.push(userId);
+      // Per the design rule: CPU is filler ONLY when no human is queued. As
+      // soon as a human opts in, the bot yields immediately — even if it's
+      // mid-game. Abort the in-progress bot round (no winner recorded), let
+      // assignSeats swap the bot for the on-deck human, and a fresh
+      // human-vs-human game starts on the next call.
+      const botSeated = this.room.seats.some((s) => s !== null && s.id === BOT_ID);
+      if (botSeated && this.room.phase === 'playing') {
+        this.cancelTimers();
+        this.room.phase = 'waiting';
+        this.room.game = null;
+      }
+    }
     if (!value && idx !== -1) this.room.onDeck.splice(idx, 1);
+    this.assignSeats();
     await this.persistAndBroadcast();
+  }
+
+  private async handleStepDown(userId: string): Promise<void> {
+    const seatIdx = this.findSeat(userId);
+    if (seatIdx === null) return;  // not seated, nothing to do
+
+    // Move the player to watching so they can opt back in later.
+    const s = this.room.seats[seatIdx]!;
+    this.room.watching.push({ id: s.id, displayName: s.displayName });
+    this.room.seats[seatIdx] = null;
+
+    // Cancel pending bot moves / post-game timers — they belong to a game
+    // that's now over.
+    this.cancelTimers();
+    this.room.phase = 'waiting';
+    this.room.game = null;
+    this.room.lastWinner = null;
+
+    this.assignSeats();
+    await this.persistAndBroadcast();
+  }
+
+  private cancelTimers(): void {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
   }
 
   private async handleIntent(ws: WebSocket, userId: string, payload: unknown): Promise<void> {

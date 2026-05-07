@@ -37,6 +37,7 @@ export type ClientMessage =
   | { type: 'hello'; userId: string; displayName: string }
   | { type: 'set-on-deck'; value: boolean }
   | { type: 'intent'; payload: unknown }       // game move
+  | { type: 'step-down' }                       // player voluntarily vacates seat
   | { type: 'leave' };
 
 // ── Server → client ─────────────────────────────────────────────────

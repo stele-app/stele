@@ -41,6 +41,7 @@ type RoomStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'discon
 interface RoomSession {
   send(intent: { column: number }): Promise<void>;
   setOnDeck(value: boolean): Promise<void>;
+  stepDown(): Promise<void>;
   leave(): Promise<void>;
   onSnapshot(h: (snap: RoomSnapshot) => void): () => void;
   onError(h: (err: { code: string; message: string }) => void): () => void;
@@ -261,7 +262,9 @@ function GameScreen({ snap, session }: { snap: RoomSnapshot; session: RoomSessio
         snap={snap}
         isOnDeck={isOnDeck}
         canQueue={yourRole === 'spectator'}
+        canStepDown={yourRole === 'player'}
         onToggleQueue={() => session?.setOnDeck(!isOnDeck).catch(() => {})}
+        onStepDown={() => session?.stepDown().catch(() => {})}
       />
     </div>
   );
@@ -539,12 +542,14 @@ function Confetti({ seed }: { seed: string }) {
 }
 
 function SideBars({
-  snap, isOnDeck, canQueue, onToggleQueue,
+  snap, isOnDeck, canQueue, canStepDown, onToggleQueue, onStepDown,
 }: {
   snap: RoomSnapshot;
   isOnDeck: boolean;
   canQueue: boolean;
+  canStepDown: boolean;
   onToggleQueue: () => void;
+  onStepDown: () => void;
 }) {
   const onDeckIds = new Set(snap.onDeck);
   const queue = snap.onDeck
@@ -555,10 +560,13 @@ function SideBars({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <Panel title="On deck">
-        <div className="flex items-center justify-between mb-3 -mt-1">
+        <div className="flex items-center justify-between mb-3 -mt-1 gap-2">
           <span className="text-[10px] font-bold uppercase" style={{ letterSpacing: '0.18em', color: C.textMuted }}>Up next</span>
           {canQueue && <ChunkyButton variant={isOnDeck ? 'cancel' : 'primary'} onClick={onToggleQueue}>
             {isOnDeck ? "Cancel" : "Next — I'll play"}
+          </ChunkyButton>}
+          {canStepDown && <ChunkyButton variant="cancel" onClick={onStepDown}>
+            Step down
           </ChunkyButton>}
         </div>
         {queue.length === 0 ? (

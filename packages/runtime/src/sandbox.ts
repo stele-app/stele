@@ -229,6 +229,7 @@ const BOOT_SCRIPT = `
           return {
             send: function(intent) { return rpc('room.send', { intent: intent }); },
             setOnDeck: function(value) { return rpc('room.setOnDeck', { value: !!value }); },
+            stepDown: function() { return rpc('room.stepDown', {}); },
             leave: function() { return rpc('room.leave', {}); },
             onSnapshot: function(handler) { return subscribe('room.snapshot', handler); },
             onError: function(handler) { return subscribe('room.error', handler); },
