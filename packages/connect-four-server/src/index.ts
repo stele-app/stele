@@ -20,6 +20,8 @@ export { RoomDO } from './room-do.ts';
 
 interface Env {
   ROOM: DurableObjectNamespace;
+  /** Set via `wrangler secret put ADMIN_SECRET`. Required for /admin/reset. */
+  ADMIN_SECRET?: string;
 }
 
 function corsHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -52,6 +54,21 @@ export default {
       const id = env.ROOM.idFromName('main');
       const stub = env.ROOM.get(id);
       return stub.fetch(request);
+    }
+
+    // Emergency room reset. Closes all WS, wipes storage. Header-gated by a
+    // shared secret so passers-by can't grief the demo.
+    if (url.pathname === '/admin/reset' && request.method === 'POST') {
+      const provided = request.headers.get('x-stele-admin') ?? '';
+      const expected = env.ADMIN_SECRET ?? '';
+      if (!expected || provided !== expected) {
+        return new Response(JSON.stringify({ error: 'forbidden' }), {
+          status: 403, headers: corsHeaders({ 'content-type': 'application/json' }),
+        });
+      }
+      const id = env.ROOM.idFromName('main');
+      const stub = env.ROOM.get(id);
+      return stub.fetch(new Request('https://internal/admin/reset', { method: 'POST' }));
     }
 
     return new Response(JSON.stringify({ error: `Unknown path '${url.pathname}'` }), {

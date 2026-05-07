@@ -74,6 +74,23 @@ export class RoomDO implements DurableObject {
   // ── HTTP entry — only for WebSocket upgrades ────────────────────────
 
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    // Emergency reset: close every attached WS and wipe storage so the room
+    // starts fresh. The Worker entry guards this with a shared header so
+    // public traffic can't hit it.
+    if (request.method === 'POST' && url.pathname === '/admin/reset') {
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.close(4001, 'admin reset'); } catch { /* swallow */ }
+      }
+      for (const t of this.timers) clearTimeout(t);
+      this.timers.clear();
+      this.room = freshState();
+      await this.state.storage.deleteAll();
+      return new Response(JSON.stringify({ ok: true, reset: true }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+
     const upgrade = request.headers.get('Upgrade');
     if (upgrade?.toLowerCase() !== 'websocket') {
       return new Response('Expected WebSocket upgrade', { status: 426 });

@@ -15,6 +15,7 @@ const PUBLIC_BASE = 'https://raw.githubusercontent.com/stele-app/artifact-exampl
 
 const DEMOS: Array<{ emoji: string; name: string; tagline: string; src: string }> = [
   { emoji: '⛵', name: 'Battleship',     tagline: 'Classic game, single file', src: `${RAW_BASE}/battleship.jsx` },
+  { emoji: '🎮', name: 'Connect Four',   tagline: 'Live two-player — winner stays, challengers queue', src: `${RAW_BASE}/connect-four.tsx` },
   { emoji: '✍️', name: 'The Signer',    tagline: 'Drop a PDF, click to sign + date, download', src: `${PUBLIC_BASE}/sign-pdf.tsx` },
   { emoji: '🎒', name: 'Year 2 Mission HQ', tagline: 'Homework — results to teacher, or PDF fallback', src: `${RAW_BASE}/year2-homework.jsx` },
   { emoji: '🦺', name: 'Site Prestart',  tagline: 'Tradie daily check, GPS + photos', src: `${RAW_BASE}/site-prestart.tsx` },
