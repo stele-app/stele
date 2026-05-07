@@ -333,12 +333,28 @@ export class RoomDO implements DurableObject {
    * Priority for filling an empty seat: on-deck > bot. Spectators not on-deck
    * stay passive — they have to press "next" to play.
    *
-   * The bot is a fallback filler so the room never stalls: as long as any
-   * human is present (seated or watching), an empty seat gets a CPU opponent
-   * and the game keeps running for whoever is seated.
+   * The bot is *only* a stand-in opponent for a real human. We never seat
+   * bot-vs-bot, and we never leave a bot sitting alone in an otherwise-empty
+   * room. The room either has at least one human seated (with the bot
+   * filling the second seat if no on-deck human is queued), or it sits
+   * with empty seats waiting for a human to opt in.
    */
   private assignSeats(): void {
     const now = Date.now();
+
+    // Pre-step: if any bot in a seat is about to be replaced (an on-deck
+    // human is queued and we're mid-game), abort the in-progress round so
+    // the swap produces a fresh game rather than dropping the new player
+    // into the bot's existing board state.
+    const botWillYield =
+      this.room.onDeck.length > 0 &&
+      this.room.seats.some((s) => s !== null && s.id === BOT_ID);
+    if (botWillYield && this.room.phase === 'playing') {
+      this.cancelTimers();
+      this.room.phase = 'waiting';
+      this.room.game = null;
+    }
+
     // 1. Fill empty seats from on-deck (in seat order).
     for (let i = 0; i < 2; i++) {
       if (this.room.seats[i] !== null) continue;
@@ -356,22 +372,22 @@ export class RoomDO implements DurableObject {
       const p = this.takeFromWatching(nextId);
       if (p) this.room.seats[i] = { id: p.id, displayName: p.displayName, seatedAt: now };
     }
-    // 3. Fill any remaining empties with the bot — but only if at least one
-    //    human is in the room (otherwise we'd seat bot-vs-bot, which is not a
-    //    game). Watching counts: a passive spectator still wants to see action.
-    const anyHumanInRoom =
-      this.room.seats.some((s) => s !== null && s.id !== BOT_ID) ||
-      this.room.watching.length > 0;
-    if (anyHumanInRoom) {
-      for (let i = 0; i < 2; i++) {
-        if (this.room.seats[i] === null) {
-          this.room.seats[i] = { id: BOT_ID, displayName: 'CPU', seatedAt: now };
-        }
+    // 3. Fill an empty seat with the bot ONLY if the other seat has a real
+    //    human. The bot exists as a stand-in opponent for a human; it never
+    //    plays itself, never sits alone. (This replaces the previous
+    //    "anyHumanInRoom" check that produced a brief bot-vs-bot state when
+    //    the lone human dropped to watching after a loss.)
+    for (let i = 0; i < 2; i++) {
+      if (this.room.seats[i] !== null) continue;
+      const other = this.room.seats[1 - i];
+      if (other && other.id !== BOT_ID) {
+        this.room.seats[i] = { id: BOT_ID, displayName: 'CPU', seatedAt: now };
       }
     }
-    // 4. Degenerate case: both seats turned out to be bot (the lone human
-    //    just left). Clear so the room idles cleanly.
-    if (this.room.seats[0]?.id === BOT_ID && this.room.seats[1]?.id === BOT_ID) {
+    // 4. No human in any seat → clear any leftover bot. Bot doesn't sit
+    //    alone; the room presents as cleanly empty until a human opts in.
+    const humanSeated = this.room.seats.some((s) => s !== null && s.id !== BOT_ID);
+    if (!humanSeated) {
       this.room.seats[0] = null;
       this.room.seats[1] = null;
     }
