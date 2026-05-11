@@ -26,7 +26,7 @@ import {
 import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
-import { shareLink } from '../share';
+import { shareArtifact } from '../share';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -415,22 +415,40 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   status: string;
   viaProxy: boolean;
 }) {
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [shareState, setShareState] = useState<'idle' | 'publishing' | 'copied' | 'failed'>('idle');
+  const [shareError, setShareError] = useState<string | null>(null);
+  const isLocal = src.startsWith(LOCAL_SCHEME);
 
-  const shareUrl = `${window.location.origin}/view?src=${encodeURIComponent(src)}`;
   // Note: any #token=… fragment is deliberately NOT included. Tokens are auth
   // credentials; sharing them grants access. A future "share with token"
   // affordance can opt in to that behaviour.
-
   const handleShare = async () => {
-    const outcome = await shareLink(shareUrl, 'Stele artifact');
-    if (outcome === 'native') return;
-    if (outcome === 'copied') {
-      setCopyState('copied');
-      setTimeout(() => setCopyState('idle'), 1800);
+    if (shareState === 'publishing') return;
+    setShareError(null);
+    if (isLocal) setShareState('publishing');
+    const result = await shareArtifact(src, manifest?.name || 'Stele artifact');
+    if (result.kind === 'missing-local') {
+      setShareError("This artifact's source isn't in this browser anymore. Drop the file in to re-open it.");
+      setShareState('failed');
+      setTimeout(() => setShareState('idle'), 4000);
+      return;
+    }
+    if (result.kind === 'publish-failed') {
+      setShareError(result.error);
+      setShareState('failed');
+      setTimeout(() => setShareState('idle'), 4000);
+      return;
+    }
+    if (result.kind === 'native') {
+      setShareState('idle');
+      return;
+    }
+    if (result.kind === 'copied') {
+      setShareState('copied');
+      setTimeout(() => setShareState('idle'), 1800);
     } else {
-      setCopyState('failed');
-      setTimeout(() => setCopyState('idle'), 2500);
+      setShareState('failed');
+      setTimeout(() => setShareState('idle'), 2500);
     }
   };
 
@@ -486,25 +504,32 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
       <div style={{ flex: 1 }} />
       <button
         onClick={handleShare}
+        disabled={shareState === 'publishing'}
         title={
-          copyState === 'failed'
-            ? `Couldn't copy — link is: ${shareUrl}`
-            : `Copy a shareable link to this artifact (no token included)`
+          shareState === 'failed' && shareError
+            ? shareError
+            : isLocal
+              ? "Uploads this artifact to Stele's server so anyone with the link can open it for 24 hours."
+              : 'Copy a shareable link to this artifact (no token included).'
         }
         style={{
           padding: '4px 12px',
           borderRadius: 6,
           border: '1px solid',
-          borderColor: copyState === 'copied' ? '#14532d' : copyState === 'failed' ? '#7f1d1d' : '#334155',
-          background: copyState === 'copied' ? '#0f2a1f' : copyState === 'failed' ? '#1e1215' : 'transparent',
-          color: copyState === 'copied' ? '#86efac' : copyState === 'failed' ? '#fca5a5' : '#cbd5e1',
+          borderColor: shareState === 'copied' ? '#14532d' : shareState === 'failed' ? '#7f1d1d' : '#334155',
+          background: shareState === 'copied' ? '#0f2a1f' : shareState === 'failed' ? '#1e1215' : 'transparent',
+          color: shareState === 'copied' ? '#86efac' : shareState === 'failed' ? '#fca5a5' : '#cbd5e1',
           fontSize: 12,
           fontWeight: 500,
-          cursor: 'pointer',
+          cursor: shareState === 'publishing' ? 'wait' : 'pointer',
+          opacity: shareState === 'publishing' ? 0.7 : 1,
           transition: 'all 150ms',
         }}
       >
-        {copyState === 'copied' ? 'Copied ✓' : copyState === 'failed' ? 'Copy failed' : 'Share link'}
+        {shareState === 'publishing' ? 'Publishing…'
+          : shareState === 'copied' ? 'Copied ✓'
+          : shareState === 'failed' ? 'Share failed'
+          : isLocal ? 'Publish & share' : 'Share link'}
       </button>
       <span style={{ fontSize: 12, color: '#64748b' }}>{status}</span>
     </div>

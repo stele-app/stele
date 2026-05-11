@@ -10,8 +10,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { libraryDelete, libraryList, type LibraryEntry } from '../idb';
-import { shareLink } from '../share';
+import { libraryDelete, libraryList, LOCAL_SCHEME, type LibraryEntry } from '../idb';
+import { shareArtifact } from '../share';
 import type { Archetype } from '@stele/runtime';
 import { PublicHeader, PublicFooter } from '../components/PublicChrome';
 import { T } from '../publicTheme';
@@ -43,8 +43,8 @@ export default function Library() {
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState('');
-  /** Most-recently-shared src key, so the matching card can show "Copied ✓" briefly. */
-  const [copiedSrc, setCopiedSrc] = useState<string | null>(null);
+  /** Per-card share state. Only one card can be in flight at a time in practice. */
+  const [share, setShare] = useState<{ src: string; state: 'publishing' | 'copied' | 'failed'; error?: string } | null>(null);
 
   useEffect(() => {
     libraryList()
@@ -73,15 +73,32 @@ export default function Library() {
 
   const handleShare = async (e: React.MouseEvent, src: string, title: string) => {
     e.stopPropagation();
-    const shareUrl = `${window.location.origin}/view?src=${encodeURIComponent(src)}`;
-    const outcome = await shareLink(shareUrl, title);
-    if (outcome === 'native') return;
-    if (outcome === 'copied') {
-      setCopiedSrc(src);
-      setTimeout(() => setCopiedSrc((curr) => (curr === src ? null : curr)), 1800);
+    if (share?.src === src && share.state === 'publishing') return;
+    const isLocal = src.startsWith(LOCAL_SCHEME);
+    if (isLocal) setShare({ src, state: 'publishing' });
+
+    const result = await shareArtifact(src, title);
+    if (result.kind === 'missing-local') {
+      setShare({ src, state: 'failed', error: "This artifact's source isn't in this browser anymore. Re-open the file to publish it." });
+      setTimeout(() => setShare((curr) => (curr?.src === src ? null : curr)), 4000);
+      return;
+    }
+    if (result.kind === 'publish-failed') {
+      setShare({ src, state: 'failed', error: result.error });
+      setTimeout(() => setShare((curr) => (curr?.src === src ? null : curr)), 4000);
+      return;
+    }
+    if (result.kind === 'native') {
+      setShare(null);
+      return;
+    }
+    if (result.kind === 'copied') {
+      setShare({ src, state: 'copied' });
+      setTimeout(() => setShare((curr) => (curr?.src === src ? null : curr)), 1800);
     } else {
       // Both Web Share and clipboard failed — surface the URL so the user can copy by hand.
-      window.prompt('Copy this share link:', shareUrl);
+      window.prompt('Copy this share link:', result.url);
+      setShare(null);
     }
   };
 
@@ -205,23 +222,45 @@ export default function Library() {
                       }}>
                         {entry.title}
                       </div>
-                      <button
-                        onClick={(e) => handleShare(e, entry.src, entry.title)}
-                        title="Share or copy link (no token included)"
-                        style={{
-                          padding: '3px 8px',
-                          background: copiedSrc === entry.src ? '#f0fdf4' : 'transparent',
-                          border: `1px solid ${copiedSrc === entry.src ? '#bbf7d0' : T.border}`,
-                          color: copiedSrc === entry.src ? '#15803d' : T.textMuted,
-                          fontSize: 11,
-                          cursor: 'pointer',
-                          borderRadius: 4,
-                          whiteSpace: 'nowrap',
-                          fontFamily: T.fontSans,
-                        }}
-                      >
-                        {copiedSrc === entry.src ? 'Copied ✓' : 'Share'}
-                      </button>
+                      {(() => {
+                        const isLocal = entry.src.startsWith(LOCAL_SCHEME);
+                        const state = share?.src === entry.src ? share.state : 'idle';
+                        const label = state === 'publishing' ? 'Publishing…'
+                          : state === 'copied' ? 'Copied ✓'
+                          : state === 'failed' ? 'Share failed'
+                          : isLocal ? 'Publish & share' : 'Share';
+                        const palette = state === 'copied'
+                          ? { bg: '#f0fdf4', fg: '#15803d', border: '#bbf7d0' }
+                          : state === 'failed'
+                          ? { bg: '#fef2f2', fg: '#b91c1c', border: '#fecaca' }
+                          : { bg: 'transparent', fg: T.textMuted, border: T.border };
+                        const tooltip = state === 'failed' && share?.error
+                          ? share.error
+                          : isLocal
+                            ? "Uploads this artifact to Stele's server so anyone with the link can open it for 24 hours."
+                            : 'Copy a shareable link (no token included).';
+                        return (
+                          <button
+                            onClick={(e) => handleShare(e, entry.src, entry.title)}
+                            disabled={state === 'publishing'}
+                            title={tooltip}
+                            style={{
+                              padding: '3px 8px',
+                              background: palette.bg,
+                              border: `1px solid ${palette.border}`,
+                              color: palette.fg,
+                              fontSize: 11,
+                              cursor: state === 'publishing' ? 'wait' : 'pointer',
+                              opacity: state === 'publishing' ? 0.7 : 1,
+                              borderRadius: 4,
+                              whiteSpace: 'nowrap',
+                              fontFamily: T.fontSans,
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })()}
                       <button
                         onClick={(e) => handleDelete(e, entry.src)}
                         title="Remove from library"
