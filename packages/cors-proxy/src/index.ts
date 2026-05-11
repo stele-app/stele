@@ -210,21 +210,45 @@ async function handlePublish(request: Request, env: Env, requestUrl: URL): Promi
   }
 
   // Cheap shape sniff so /publish doesn't become an open file host. Stele
-  // accepts no-manifest artifacts (presentation-only mode), so we accept
-  // either a manifest directive OR the standard JSX/TSX entry point. HTML
-  // artifacts get an out via the manifest path. The viewer parser does the
-  // real validation; this just keeps the bucket Stele-shaped.
-  if (!source.includes('@stele-manifest') && !/export\s+default/.test(source)) {
-    return jsonError("Doesn't look like a Stele artifact (no @stele-manifest or `export default`).", 422);
+  // accepts six shapes — accept any of:
+  //   - @stele-manifest directive (any kind)
+  //   - `export default`          (JSX/TSX)
+  //   - first non-whitespace `<`  (HTML/SVG)
+  //   - first non-whitespace `#`  (Markdown heading)
+  // Mermaid + plain-text MD without a heading slip through only if they
+  // also have a manifest, which is a fair ask.
+  const head = source.slice(0, 256).trimStart();
+  const looksStele =
+    source.includes('@stele-manifest') ||
+    /export\s+default/.test(source) ||
+    head.startsWith('<') ||
+    head.startsWith('#');
+  if (!looksStele) {
+    return jsonError(
+      "Doesn't look like a Stele artifact. Add a @stele-manifest comment to share it.",
+      422,
+    );
   }
 
   const id = randomId();
   const key = `p/${id}.stele`;
   const expiresAt = new Date(Date.now() + PUBLISH_TTL_MS).toISOString();
 
+  // Detect content type so the viewer routes to the right transform branch.
+  // The viewer's detectKind() at packages/web-viewer/src/routes/Viewer.tsx
+  // checks the response Content-Type before falling back to URL extension —
+  // which for /p/<id>.stele would always say "jsx" and choke on HTML/SVG.
+  let contentType = 'text/plain; charset=utf-8';
+  const headCi = head.toLowerCase();
+  if (headCi.startsWith('<!doctype html') || headCi.startsWith('<html')) {
+    contentType = 'text/html; charset=utf-8';
+  } else if (headCi.startsWith('<svg')) {
+    contentType = 'image/svg+xml';
+  }
+
   try {
     await env.ARTIFACTS.put(key, source, {
-      httpMetadata: { contentType: 'text/plain; charset=utf-8' },
+      httpMetadata: { contentType },
       customMetadata: { expiresAt },
     });
   } catch (err) {
