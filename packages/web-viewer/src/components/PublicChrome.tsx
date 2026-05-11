@@ -17,6 +17,7 @@ const NAV_LINKS: Array<{ to: string; label: string }> = [
   { to: '/use-cases', label: 'Use cases' },
   { to: '/about', label: 'About' },
   { to: '/library', label: 'Library' },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export function PublicHeader({ mode, current }: { mode: 'home' | 'sub'; current?: string }) {

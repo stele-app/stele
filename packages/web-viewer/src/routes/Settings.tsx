@@ -113,7 +113,7 @@ export default function Settings() {
       display: 'flex',
       flexDirection: 'column',
     }}>
-      <PublicHeader mode="sub" />
+      <PublicHeader mode="sub" current="/settings" />
 
       <main style={{ flex: 1, padding: '48px 28px' }}>
         <div style={{ maxWidth: 820, margin: '0 auto' }}>
