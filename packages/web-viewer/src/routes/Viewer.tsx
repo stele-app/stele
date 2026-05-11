@@ -86,6 +86,11 @@ async function fetchArtifact(src: string): Promise<{ source: string; contentType
 }
 
 function detectKind(url: string, contentType: string | null, localFilename?: string): 'jsx' | 'tsx' | 'html' {
+  // Content-type wins when the server told us explicitly. The `.stele`
+  // extension is intentionally generic and may wrap HTML/JSX/etc., so we
+  // can't trust the URL ext alone — published artifacts at /p/<id>.stele
+  // can carry any supported shape.
+  if (contentType?.includes('html')) return 'html';
   // For local: artifacts the URL is just a synthetic id, so the filename has
   // the real extension we should detect from.
   const source = localFilename ?? url;
@@ -93,7 +98,6 @@ function detectKind(url: string, contentType: string | null, localFilename?: str
   if (ext === 'tsx') return 'tsx';
   if (ext === 'jsx' || ext === 'stele') return 'jsx';
   if (ext === 'html' || ext === 'htm') return 'html';
-  if (contentType?.includes('html')) return 'html';
   return 'jsx';
 }
 
