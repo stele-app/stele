@@ -1,6 +1,6 @@
 # Stele Privacy Policy
 
-_Last updated: 2026-04-23_
+_Last updated: 2026-05-11_
 
 Stele is a local-first, open-source desktop application. It is designed to handle your data on your own device, without accounts, servers, or tracking.
 
@@ -18,6 +18,12 @@ Stele stores the following data **only on your own device**, in a local SQLite d
 - **Watched folders** — any folder paths you have asked Stele to monitor for new artifact files.
 
 This data never leaves your device unless you explicitly export or share it.
+
+## Web viewer: optional sharing
+
+The web viewer at stele.au has a "Share link" button. For artifacts opened from a URL, this just copies that URL — nothing is uploaded. For artifacts opened from a local file or generated in your browser, clicking Share **uploads the artifact source to a Stele-operated endpoint** so the recipient of the link can open it. Uploads are anonymous, retained for **24 hours**, then permanently deleted. Anyone with the link can read the artifact source during that window.
+
+The desktop app does not upload anything when you share.
 
 ## What artifacts you run can do
 

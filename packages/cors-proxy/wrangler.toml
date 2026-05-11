@@ -2,10 +2,24 @@ name = "stele-cors-proxy"
 main = "src/index.ts"
 compatibility_date = "2026-04-25"
 
-# Production deployment: point stele.au/fetch* at this worker via a route.
-# For now it only runs under `wrangler dev` — wire the domain route when
-# stele.au DNS is live.
+# Production deployment: point stele.au at this worker via a route. The worker
+# now serves /fetch (CORS proxy), /publish (POST artifact source), and
+# /p/<id>.stele (GET published artifact). For now it only runs under `wrangler
+# dev` — wire the domain route when stele.au DNS is live.
 #
 # [[routes]]
-# pattern = "stele.au/fetch*"
+# pattern = "stele.au/*"
 # custom_domain = false
+
+# R2 bucket for published artifacts. The bucket needs a lifecycle rule that
+# deletes objects ≥ 1 day after upload — R2's minimum granularity. The worker
+# also enforces a precise 24h cutoff on read via customMetadata.expiresAt, so
+# clients see exactly-24h expiry while R2 sweeps physical storage daily.
+#
+# Configure the lifecycle rule once via:
+#   wrangler r2 bucket lifecycle add stele-shared-artifacts \
+#     --id expire-1d --prefix p/ --expire-days 1
+# (or the Cloudflare dashboard).
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "stele-shared-artifacts"
