@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Landing from './routes/Landing';
+import About from './routes/About';
+import How from './routes/How';
+import Examples from './routes/Examples';
+import UseCases from './routes/UseCases';
 import Viewer from './routes/Viewer';
 import Library from './routes/Library';
 import Settings from './routes/Settings';
@@ -20,6 +24,10 @@ createRoot(rootEl).render(
       <FileHandler />
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/how" element={<How />} />
+        <Route path="/examples" element={<Examples />} />
+        <Route path="/use-cases" element={<UseCases />} />
         <Route path="/view" element={<Viewer />} />
         <Route path="/library" element={<Library />} />
         <Route path="/settings" element={<Settings />} />

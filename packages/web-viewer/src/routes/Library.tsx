@@ -2,8 +2,10 @@
  * Web library — recently-opened artifacts persisted in IndexedDB.
  *
  * Each card represents a unique artifact URL. Click to re-open in the viewer.
- * The list is automatically deduplicated by src; openCount and lastOpenedAt
- * update when a card is re-opened. Search filters on title.
+ * The list is deduplicated by src; openCount and lastOpenedAt update when a
+ * card is re-opened. Search filters on title.
+ *
+ * Light-themed to match the public surface — same chrome as Landing, About, etc.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -11,12 +13,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { libraryDelete, libraryList, type LibraryEntry } from '../idb';
 import { shareLink } from '../share';
 import type { Archetype } from '@stele/runtime';
+import { PublicHeader, PublicFooter } from '../components/PublicChrome';
+import { T } from '../publicTheme';
 
 const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; color: string; border: string }> = {
-  'self-contained': { label: 'self-contained', background: '#0f2a1f', color: '#86efac', border: '#14532d' },
-  'client-view':    { label: 'client view',    background: '#0f1e3a', color: '#93c5fd', border: '#1e3a8a' },
-  'paired':         { label: 'paired',         background: '#1f0f3a', color: '#c4b5fd', border: '#4c1d95' },
-  'rooms':          { label: 'rooms',          background: '#3a200f', color: '#fdba74', border: '#9a3412' },
+  'self-contained': { label: 'self-contained', background: '#f0fdf4', color: '#15803d', border: '#bbf7d0' },
+  'client-view':    { label: 'client view',    background: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+  'paired':         { label: 'paired',         background: '#f5f3ff', color: '#6d28d9', border: '#ddd6fe' },
+  'rooms':          { label: 'rooms',          background: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
 };
 
 function formatTime(ts: number): string {
@@ -76,8 +80,7 @@ export default function Library() {
       setCopiedSrc(src);
       setTimeout(() => setCopiedSrc((curr) => (curr === src ? null : curr)), 1800);
     } else {
-      // Both Web Share and clipboard failed — surface the URL so the user
-      // can copy by hand.
+      // Both Web Share and clipboard failed — surface the URL so the user can copy by hand.
       window.prompt('Copy this share link:', shareUrl);
     }
   };
@@ -85,169 +88,201 @@ export default function Library() {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#0f172a',
-      color: '#e2e8f0',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      padding: '32px 24px',
+      background: T.bg,
+      color: T.text,
+      fontFamily: T.fontSans,
+      display: 'flex',
+      flexDirection: 'column',
     }}>
-      <div style={{ maxWidth: 980, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-          <Link to="/" style={{
-            padding: '4px 10px',
-            borderRadius: 6,
-            border: '1px solid #334155',
-            color: '#94a3b8',
-            fontSize: 13,
-            textDecoration: 'none',
-          }}>← Home</Link>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Library</h1>
-          <div style={{ flex: 1 }} />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by title or URL…"
-            style={{
-              padding: '8px 14px',
-              borderRadius: 8,
-              border: '1px solid #334155',
-              background: '#1e293b',
-              color: '#e2e8f0',
-              fontSize: 13,
-              width: 260,
-              outline: 'none',
-            }}
-          />
-        </div>
+      <PublicHeader mode="sub" current="/library" />
 
-        {!loaded && <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>Loading…</div>}
-
-        {loaded && entries.length === 0 && (
+      <main style={{ flex: 1, padding: '48px 28px' }}>
+        <div style={{ maxWidth: 980, margin: '0 auto' }}>
           <div style={{
-            padding: '60px 24px',
-            textAlign: 'center',
-            color: '#64748b',
-            border: '2px dashed #334155',
-            borderRadius: 12,
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'space-between',
+            gap: 16,
+            marginBottom: 28,
+            flexWrap: 'wrap',
           }}>
-            <div style={{ fontSize: 15, marginBottom: 8 }}>Your library is empty.</div>
-            <div style={{ fontSize: 13 }}>
-              Open an artifact from <Link to="/" style={{ color: '#93c5fd' }}>the home page</Link> and it'll show up here.
+            <div>
+              <h1 style={{
+                fontFamily: T.fontSerif,
+                fontSize: 36,
+                fontWeight: 500,
+                letterSpacing: '-0.02em',
+                margin: 0,
+                marginBottom: 6,
+              }}>
+                Library
+              </h1>
+              <p style={{ fontSize: 14, color: T.textMuted, margin: 0 }}>
+                Artifacts you've opened on this device. Lives in your browser only.
+              </p>
             </div>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              style={{
+                padding: '8px 14px',
+                borderRadius: 6,
+                border: `1px solid ${T.borderStrong}`,
+                background: T.bg,
+                color: T.text,
+                fontSize: 13,
+                width: 240,
+                outline: 'none',
+                fontFamily: T.fontSans,
+              }}
+            />
           </div>
-        )}
 
-        {loaded && filtered.length === 0 && entries.length > 0 && (
-          <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>
-            No artifacts match "{search}".
-          </div>
-        )}
+          {!loaded && (
+            <div style={{ color: T.textFaint, textAlign: 'center', padding: 48, fontSize: 14 }}>
+              Loading…
+            </div>
+          )}
 
-        {filtered.length > 0 && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: 14,
-          }}>
-            {filtered.map((entry) => {
-              const theme = ARCHETYPE_THEME[entry.archetype];
-              const archetypeLabel = entry.archetype === 'client-view' && entry.serverHost
-                ? `client view · ${entry.serverHost}`
-                : theme.label;
-              return (
-                <div
-                  key={entry.src}
-                  onClick={() => handleOpen(entry)}
-                  style={{
-                    background: '#1e293b',
-                    border: '1px solid #334155',
-                    borderRadius: 10,
-                    padding: 16,
-                    cursor: 'pointer',
-                    transition: 'border-color 150ms, transform 150ms',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = '#475569';
-                    (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = '#334155';
-                    (e.currentTarget as HTMLElement).style.transform = 'none';
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'start', gap: 6, marginBottom: 8 }}>
-                    <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: '#e2e8f0', wordBreak: 'break-word' }}>
-                      {entry.title}
-                    </div>
-                    <button
-                      onClick={(e) => handleShare(e, entry.src, entry.title)}
-                      title="Share or copy link (no token included)"
-                      style={{
-                        padding: '2px 8px',
-                        background: copiedSrc === entry.src ? '#0f2a1f' : 'transparent',
-                        border: `1px solid ${copiedSrc === entry.src ? '#14532d' : '#334155'}`,
-                        color: copiedSrc === entry.src ? '#86efac' : '#94a3b8',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                        borderRadius: 4,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {copiedSrc === entry.src ? 'Copied ✓' : 'Share'}
-                    </button>
-                    <button
-                      onClick={(e) => handleDelete(e, entry.src)}
-                      title="Remove from library"
-                      style={{
-                        padding: '2px 6px',
-                        background: 'transparent',
-                        border: '1px solid #334155',
-                        color: '#64748b',
-                        fontSize: 12,
-                        cursor: 'pointer',
-                        borderRadius: 4,
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
+          {loaded && entries.length === 0 && (
+            <div style={{
+              padding: '72px 24px',
+              textAlign: 'center',
+              border: `1px dashed ${T.borderStrong}`,
+              borderRadius: 12,
+              background: T.bgAlt,
+            }}>
+              <div style={{ fontSize: 15, color: T.text, marginBottom: 8, fontWeight: 500 }}>
+                Your library is empty.
+              </div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>
+                Open an artifact from the <Link to="/" style={{ color: T.accent, textDecoration: 'none' }}>home page</Link> and it'll show up here.
+              </div>
+            </div>
+          )}
 
-                  <span
+          {loaded && filtered.length === 0 && entries.length > 0 && (
+            <div style={{ color: T.textFaint, textAlign: 'center', padding: 48, fontSize: 14 }}>
+              No artifacts match "{search}".
+            </div>
+          )}
+
+          {filtered.length > 0 && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: 14,
+            }}>
+              {filtered.map((entry) => {
+                const theme = ARCHETYPE_THEME[entry.archetype];
+                const archetypeLabel = entry.archetype === 'client-view' && entry.serverHost
+                  ? `client view · ${entry.serverHost}`
+                  : theme.label;
+                return (
+                  <div
+                    key={entry.src}
+                    onClick={() => handleOpen(entry)}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = T.accent; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = T.border; }}
                     style={{
+                      background: T.bg,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: 16,
+                      cursor: 'pointer',
+                      transition: 'border-color 120ms',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'start', gap: 6, marginBottom: 10 }}>
+                      <div style={{
+                        flex: 1,
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: T.text,
+                        wordBreak: 'break-word',
+                      }}>
+                        {entry.title}
+                      </div>
+                      <button
+                        onClick={(e) => handleShare(e, entry.src, entry.title)}
+                        title="Share or copy link (no token included)"
+                        style={{
+                          padding: '3px 8px',
+                          background: copiedSrc === entry.src ? '#f0fdf4' : 'transparent',
+                          border: `1px solid ${copiedSrc === entry.src ? '#bbf7d0' : T.border}`,
+                          color: copiedSrc === entry.src ? '#15803d' : T.textMuted,
+                          fontSize: 11,
+                          cursor: 'pointer',
+                          borderRadius: 4,
+                          whiteSpace: 'nowrap',
+                          fontFamily: T.fontSans,
+                        }}
+                      >
+                        {copiedSrc === entry.src ? 'Copied ✓' : 'Share'}
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(e, entry.src)}
+                        title="Remove from library"
+                        style={{
+                          padding: '3px 8px',
+                          background: 'transparent',
+                          border: `1px solid ${T.border}`,
+                          color: T.textFaint,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          borderRadius: 4,
+                          fontFamily: T.fontSans,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <span style={{
                       display: 'inline-block',
                       fontSize: 10,
-                      padding: '2px 6px',
+                      padding: '2px 7px',
                       borderRadius: 4,
                       background: theme.background,
                       color: theme.color,
                       border: `1px solid ${theme.border}`,
                       fontWeight: 500,
-                      marginBottom: 10,
-                    }}
-                  >
-                    {archetypeLabel}
-                  </span>
+                      marginBottom: 12,
+                      fontFamily: T.fontSans,
+                    }}>
+                      {archetypeLabel}
+                    </span>
 
-                  <div style={{
-                    fontSize: 11,
-                    color: '#64748b',
-                    fontFamily: 'ui-monospace, monospace',
-                    wordBreak: 'break-all',
-                    marginBottom: 8,
-                  }}>
-                    {hostOf(entry.src)}
-                  </div>
+                    <div style={{
+                      fontSize: 11,
+                      color: T.textFaint,
+                      fontFamily: T.fontMono,
+                      wordBreak: 'break-all',
+                      marginBottom: 8,
+                    }}>
+                      {hostOf(entry.src)}
+                    </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
-                    <span>opened {entry.openCount}×</span>
-                    <span>{formatTime(entry.lastOpenedAt)}</span>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 11,
+                      color: T.textFaint,
+                    }}>
+                      <span>opened {entry.openCount}×</span>
+                      <span>{formatTime(entry.lastOpenedAt)}</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <PublicFooter />
     </div>
   );
 }
