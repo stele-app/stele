@@ -209,11 +209,13 @@ async function handlePublish(request: Request, env: Env, requestUrl: URL): Promi
     return jsonError('Body is empty', 400);
   }
 
-  // Cheap manifest sniff so /publish doesn't become an open file host. The
-  // viewer parser does the real validation; this just keeps the bucket Stele-
-  // shaped.
-  if (!source.includes('@stele-manifest')) {
-    return jsonError('Body does not contain a @stele-manifest directive', 422);
+  // Cheap shape sniff so /publish doesn't become an open file host. Stele
+  // accepts no-manifest artifacts (presentation-only mode), so we accept
+  // either a manifest directive OR the standard JSX/TSX entry point. HTML
+  // artifacts get an out via the manifest path. The viewer parser does the
+  // real validation; this just keeps the bucket Stele-shaped.
+  if (!source.includes('@stele-manifest') && !/export\s+default/.test(source)) {
+    return jsonError("Doesn't look like a Stele artifact (no @stele-manifest or `export default`).", 422);
   }
 
   const id = randomId();
