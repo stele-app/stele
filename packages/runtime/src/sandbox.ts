@@ -267,17 +267,34 @@ export async function loadVendorScriptsForSource(source: string): Promise<string
   return loadVendorFiles(neededFiles);
 }
 
+export interface ArtifactCSPOptions {
+  /** Network origins from the manifest that the user has granted. Default: none. */
+  grantedNetworkOrigins?: string[];
+  /**
+   * Allow the Tailwind Play CDN in script-src/style-src (and its Google Fonts
+   * companions). Only JSX/TSX sandboxes run the in-browser JIT compiler, so
+   * only they need this. HTML and SVG artifacts get a stricter policy with no
+   * external script/style origins at all.
+   */
+  allowTailwindCdn?: boolean;
+}
+
 /**
- * Builds the Content-Security-Policy meta tag content for a sandboxed artifact.
+ * Builds the Content-Security-Policy for a sandboxed artifact. Used verbatim
+ * by JSX/TSX sandboxes and injected into HTML/SVG artifacts so every supported
+ * type is capability-gated the same way.
  *
- * Default is strict: `connect-src 'none'` blocks all fetch/XHR/WebSocket/EventSource.
- * Images, fonts, media stay permissive so presentation-only artifacts still look right.
- * Only `connect-src` expands based on granted network origins.
+ * `connect-src` is the exfiltration channel (fetch/XHR/WebSocket/EventSource):
+ * it defaults to `data: blob:` only — no network — and expands solely for the
+ * origins the user granted via a `network:` capability. Images, fonts, and
+ * media stay permissive so presentation-only artifacts still look right.
  *
- * Note: CSP `connect-src` supports scheme + host (+ port). Paths are ignored by spec.
- * Wildcard subdomains (`https://*.example.com`) are supported.
+ * Note: CSP `connect-src` supports scheme + host (+ port). Paths are ignored by
+ * spec. Wildcard subdomains (`https://*.example.com`) are supported.
  */
-function buildCSP(grantedNetworkOrigins: string[]): string {
+export function buildArtifactCSP(opts: ArtifactCSPOptions = {}): string {
+  const { grantedNetworkOrigins = [], allowTailwindCdn = false } = opts;
+
   // data: and blob: are always allowed in connect-src — they're in-process
   // schemes that don't carry network traffic, and artifacts routinely fetch
   // their own canvas-derived data: URLs / Blob objects (e.g. for image bytes).
@@ -286,14 +303,20 @@ function buildCSP(grantedNetworkOrigins: string[]): string {
     ? `data: blob: ${grantedNetworkOrigins.join(' ')}`
     : 'data: blob:';
 
+  // The Tailwind Play CDN is the one external script/style origin JSX sandboxes
+  // load. HTML/SVG omit it entirely (allowTailwindCdn === false).
+  const scriptExtra = allowTailwindCdn ? ' https://cdn.tailwindcss.com' : '';
+  const styleExtra = allowTailwindCdn ? ' https://cdn.tailwindcss.com https://fonts.googleapis.com' : '';
+  const fontExtra = allowTailwindCdn ? ' https://fonts.gstatic.com' : '';
+
   return [
     `default-src 'self' 'unsafe-inline'`,
     // Inline + eval required for transformed artifact code and Tailwind JIT.
-    `script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com`,
-    `style-src 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com`,
+    `script-src 'unsafe-inline' 'unsafe-eval'${scriptExtra}`,
+    `style-src 'unsafe-inline'${styleExtra}`,
     `img-src * data: blob:`,
     `media-src * data: blob:`,
-    `font-src * data: https://fonts.gstatic.com`,
+    `font-src * data:${fontExtra}`,
     `connect-src ${connectSrc}`,
     // Lock down things artifacts shouldn't need.
     `frame-src 'none'`,
@@ -302,6 +325,31 @@ function buildCSP(grantedNetworkOrigins: string[]): string {
     `base-uri 'none'`,
     `form-action 'none'`,
   ].join('; ');
+}
+
+/**
+ * Injects a CSP `<meta>` as the first child of an HTML artifact's `<head>` so
+ * an author-supplied document we don't control is still capability-gated.
+ *
+ * CSP delivered via `<meta>` must sit inside `<head>` before any
+ * resource-loading element, so we place it at the very top. When several CSPs
+ * apply, browsers enforce the intersection (most restrictive wins), so this can
+ * only tighten a policy the artifact ships itself — never loosen it.
+ *
+ * The CSP string uses only single-quoted keywords and bare origins, so it is
+ * safe to embed inside the double-quoted `content` attribute.
+ */
+export function injectCspMeta(html: string, csp: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, (m) => `${m}\n${meta}`);
+  }
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(/<html[^>]*>/i, (m) => `${m}\n<head>${meta}</head>`);
+  }
+  // No <html>/<head> — a bare fragment. Wrap it so the meta has a head to live
+  // in and the document still renders in standards mode.
+  return `<!DOCTYPE html><html><head>${meta}</head><body>${html}</body></html>`;
 }
 
 export interface BuildSandboxOptions {
@@ -324,7 +372,7 @@ export async function buildSandboxDoc(opts: BuildSandboxOptions): Promise<string
   const { transformedCode, artifactSource, grantedNetworkOrigins = [] } = opts;
   const neededFiles = detectVendorImports(artifactSource);
   const vendorHtml = await loadVendorFiles(neededFiles);
-  const csp = buildCSP(grantedNetworkOrigins);
+  const csp = buildArtifactCSP({ grantedNetworkOrigins, allowTailwindCdn: true });
 
   return `<!DOCTYPE html>
 <html>
