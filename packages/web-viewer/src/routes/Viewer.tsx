@@ -14,9 +14,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
+  buildArtifactCSP,
   buildSandboxDoc,
   capabilityAllowToken,
   capabilityId,
+  injectCspMeta,
   parseManifest,
   transformArtifact,
   type Archetype,
@@ -242,7 +244,11 @@ export default function Viewer() {
     (async () => {
       try {
         if (fetchState.kind_ === 'html') {
-          setSandboxDoc(fetchState.source);
+          // HTML artifacts are author-controlled documents — inject a CSP so
+          // `connect-src` is capability-gated instead of wide open. Granted
+          // network origins expand it; everything else stays no-network.
+          const csp = buildArtifactCSP({ grantedNetworkOrigins });
+          setSandboxDoc(injectCspMeta(fetchState.source, csp));
           setStatus('loading');
           return;
         }

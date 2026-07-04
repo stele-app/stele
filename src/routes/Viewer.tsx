@@ -38,11 +38,13 @@ export default function Viewer() {
 
   const artifact = id ? getArtifact(id) : undefined;
 
-  // Parse manifest from source. Only JSX/TSX artifacts carry manifests.
+  // Parse manifest from source. JSX/TSX carry a JSDoc manifest; HTML carries an
+  // `<!-- @stele-manifest -->` block. Parsing HTML manifests lets HTML artifacts
+  // declare capabilities and get the same consent + CSP gating as JSX.
   // Key on source/kind rather than the artifact object so we recompute
   // when the source is edited in place (e.g. by the Add-manifest dialog).
   const { manifest, parseErr } = useMemo(() => {
-    if (!artifact || (artifact.kind !== 'jsx' && artifact.kind !== 'tsx')) {
+    if (!artifact || (artifact.kind !== 'jsx' && artifact.kind !== 'tsx' && artifact.kind !== 'html')) {
       return { manifest: null as Manifest | null, parseErr: null as string | null };
     }
     try {

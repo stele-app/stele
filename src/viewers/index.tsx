@@ -42,7 +42,13 @@ export default function ViewerDispatch({
       );
 
     case 'html':
-      return <HtmlViewer source={artifact.source} artifactId={artifact.id} />;
+      return (
+        <HtmlViewer
+          source={artifact.source}
+          manifest={manifest}
+          grantedCapabilities={grantedCapabilities}
+        />
+      );
 
     case 'svg':
       return <SvgViewer source={artifact.source} />;
