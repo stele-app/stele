@@ -11,8 +11,10 @@ import Library from './routes/Library';
 import Settings from './routes/Settings';
 import Pair from './routes/Pair';
 import ShareTarget from './routes/ShareTarget';
+import Account from './routes/Account';
 import DropToOpen from './components/DropToOpen';
 import FileHandler from './components/FileHandler';
+import { AuthProvider } from './auth';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('#root not found');
@@ -20,20 +22,23 @@ if (!rootEl) throw new Error('#root not found');
 createRoot(rootEl).render(
   <StrictMode>
     <BrowserRouter>
-      <DropToOpen />
-      <FileHandler />
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/about" element={<About />} />
-        <Route path="/how" element={<How />} />
-        <Route path="/examples" element={<Examples />} />
-        <Route path="/use-cases" element={<UseCases />} />
-        <Route path="/view" element={<Viewer />} />
-        <Route path="/library" element={<Library />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/pair" element={<Pair />} />
-        <Route path="/share-target" element={<ShareTarget />} />
-      </Routes>
+      <AuthProvider>
+        <DropToOpen />
+        <FileHandler />
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/how" element={<How />} />
+          <Route path="/examples" element={<Examples />} />
+          <Route path="/use-cases" element={<UseCases />} />
+          <Route path="/view" element={<Viewer />} />
+          <Route path="/library" element={<Library />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/pair" element={<Pair />} />
+          <Route path="/share-target" element={<ShareTarget />} />
+          <Route path="/account" element={<Account />} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   </StrictMode>,
 );

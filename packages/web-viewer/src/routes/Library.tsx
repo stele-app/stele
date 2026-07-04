@@ -8,13 +8,17 @@
  * Light-themed to match the public surface — same chrome as Landing, About, etc.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { libraryDelete, libraryList, LOCAL_SCHEME, type LibraryEntry } from '../idb';
 import { shareArtifact } from '../share';
 import type { Archetype } from '@stele/runtime';
 import { PublicHeader, PublicFooter } from '../components/PublicChrome';
 import { T } from '../publicTheme';
+import { useAuth } from '../auth';
+import { syncLibrary } from '../librarySync';
+
+type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
 
 const ARCHETYPE_THEME: Record<Archetype, { label: string; background: string; color: string; border: string }> = {
   'self-contained': { label: 'self-contained', background: '#f0fdf4', color: '#15803d', border: '#bbf7d0' },
@@ -40,17 +44,36 @@ function hostOf(url: string): string {
 
 export default function Library() {
   const navigate = useNavigate();
+  const { signedIn, user } = useAuth();
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState('');
+  const [syncState, setSyncState] = useState<SyncState>('idle');
   /** Per-card share state. Only one card can be in flight at a time in practice. */
   const [share, setShare] = useState<{ src: string; state: 'publishing' | 'copied' | 'failed'; error?: string } | null>(null);
 
-  useEffect(() => {
-    libraryList()
+  const reload = useCallback(() => {
+    return libraryList()
       .then((list) => { setEntries(list); setLoaded(true); })
       .catch(() => { setEntries([]); setLoaded(true); });
   }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // On sign-in, two-way sync with the cloud, then reload the local list.
+  useEffect(() => {
+    if (!signedIn) { setSyncState('idle'); return; }
+    let cancelled = false;
+    setSyncState('syncing');
+    syncLibrary()
+      .then(async (r) => {
+        if (cancelled) return;
+        if (r) await reload();
+        if (!cancelled) setSyncState('synced');
+      })
+      .catch(() => { if (!cancelled) setSyncState('error'); });
+    return () => { cancelled = true; };
+  }, [signedIn, reload]);
 
   const filtered = useMemo(() => {
     if (!search) return entries;
@@ -135,7 +158,16 @@ export default function Library() {
                 Library
               </h1>
               <p style={{ fontSize: 14, color: T.textMuted, margin: 0 }}>
-                Artifacts you've opened on this device. Lives in your browser only.
+                {signedIn ? (
+                  <>
+                    Synced with <strong>@{user?.handle ?? 'account'}</strong>
+                    {syncState === 'syncing' && ' · syncing…'}
+                    {syncState === 'synced' && ' · up to date'}
+                    {syncState === 'error' && ' · sync failed'}
+                  </>
+                ) : (
+                  "Artifacts you've opened on this device. Lives in your browser only."
+                )}
               </p>
             </div>
             <input
