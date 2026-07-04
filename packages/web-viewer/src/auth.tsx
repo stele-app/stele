@@ -21,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { bootstrapLogin, type ArcadeUser } from './arcade';
+import { type ArcadeUser } from './arcade';
 
 const TOKEN_KEY = 'stele:arcade:token';
 const USER_KEY = 'stele:arcade:user';
@@ -65,7 +65,8 @@ interface AuthState {
   token: string | null;
   user: ArcadeUser | null;
   signedIn: boolean;
-  signIn: (secret: string) => Promise<void>;
+  /** Store a session obtained out-of-band (the OAuth return fragment). */
+  applySession: (token: string, user: ArcadeUser) => void;
   signOut: () => void;
 }
 
@@ -89,8 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = useCallback(async (secret: string) => {
-    const { token: t, user: u } = await bootstrapLogin(secret);
+  const applySession = useCallback((t: string, u: ArcadeUser) => {
     writeAuth(t, u);
     setToken(t);
     setUser(u);
@@ -103,8 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ token, user, signedIn: !!token, signIn, signOut }),
-    [token, user, signIn, signOut],
+    () => ({ token, user, signedIn: !!token, applySession, signOut }),
+    [token, user, applySession, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
