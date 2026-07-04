@@ -29,6 +29,7 @@ import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import { mirrorUp } from '../librarySync';
+import { useAuth } from '../auth';
 import { shareArtifact } from '../share';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -429,6 +430,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   status: string;
   viaProxy: boolean;
 }) {
+  const { signedIn } = useAuth();
   const [shareState, setShareState] = useState<'idle' | 'publishing' | 'copied' | 'failed'>('idle');
   const [shareError, setShareError] = useState<string | null>(null);
   const isLocal = src.startsWith(LOCAL_SCHEME);
@@ -523,7 +525,9 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           shareState === 'failed' && shareError
             ? shareError
             : isLocal
-              ? "Uploads this artifact to Stele's server so anyone with the link can open it for 24 hours."
+              ? (signedIn
+                  ? 'Publishes to your Arcade — a permanent link anyone can open.'
+                  : "Uploads this artifact to Stele's server for a link that works for 24 hours.")
               : 'Copy a shareable link to this artifact (no token included).'
         }
         style={{

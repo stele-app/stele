@@ -269,7 +269,9 @@ export default function Library() {
                         const tooltip = state === 'failed' && share?.error
                           ? share.error
                           : isLocal
-                            ? "Uploads this artifact to Stele's server so anyone with the link can open it for 24 hours."
+                            ? (signedIn
+                                ? 'Publishes to your Arcade — a permanent link anyone can open.'
+                                : "Uploads to Stele's server for a link that works for 24 hours.")
                             : 'Copy a shareable link (no token included).';
                         return (
                           <button

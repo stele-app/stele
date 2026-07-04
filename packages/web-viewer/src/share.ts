@@ -14,6 +14,9 @@
 
 import { localArtifactGet, LOCAL_SCHEME } from './idb';
 import { publishArtifact, PublishError } from './publish';
+import { ARCADE_API_URL, ArcadeError, publishArtifact as arcadePublish } from './arcade';
+import { getStoredToken, clearStoredAuth } from './auth';
+import { parseManifest, type Archetype } from '@stele/runtime';
 
 export type ShareOutcome = 'native' | 'copied' | 'failed';
 
@@ -41,6 +44,33 @@ export async function shareArtifact(src: string, title: string): Promise<ShareAr
     const local = await localArtifactGet(id);
     if (!local) return { kind: 'missing-local' };
 
+    // Signed in to Arcade → publish a permanent, account-owned snapshot.
+    // 'unlisted' so the link works for a recipient without listing it publicly.
+    // A dead session (401) drops the token and falls through to the anonymous
+    // 24h worker so the share still succeeds.
+    const token = ARCADE_API_URL ? getStoredToken() : null;
+    if (token) {
+      let archetype: Archetype = 'self-contained';
+      try {
+        const m = parseManifest(local.source);
+        if (m) archetype = m.archetype;
+      } catch { /* malformed manifest — publish as self-contained */ }
+      try {
+        const pub = await arcadePublish(token, { source: local.source, title, visibility: 'unlisted', archetype });
+        const shareUrl = publicViewerUrl(pub.url);
+        const outcome = await shareLink(shareUrl, title);
+        return { kind: outcome, url: shareUrl };
+      } catch (err) {
+        if (err instanceof ArcadeError && err.status === 401) {
+          clearStoredAuth();
+          // fall through to the anonymous path
+        } else {
+          return { kind: 'publish-failed', error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+    }
+
+    // Anonymous fallback: publish to the 24h worker.
     let published;
     try {
       published = await publishArtifact(local.source);

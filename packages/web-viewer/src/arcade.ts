@@ -15,6 +15,7 @@
 export const ARCADE_API_URL: string | undefined = import.meta.env.VITE_ARCADE_API_URL;
 
 export type Archetype = 'self-contained' | 'client-view' | 'paired' | 'rooms';
+export type Visibility = 'private' | 'unlisted' | 'public';
 
 export interface ArcadeUser {
   id: string;
@@ -41,6 +42,21 @@ export interface LibraryUpsertRequest {
   title: string;
   archetype: Archetype;
   serverHost?: string;
+}
+
+export interface PublishRequest {
+  source: string;
+  title: string;
+  description?: string;
+  visibility: Visibility;
+  archetype?: Archetype;
+}
+
+export interface PublishResponse {
+  id: string;
+  url: string;
+  visibility: Visibility;
+  createdAt: number;
 }
 
 export class ArcadeError extends Error {
@@ -103,4 +119,14 @@ export async function putLibraryEntry(token: string, entry: LibraryUpsertRequest
     body: JSON.stringify(entry),
   });
   await readOk(resp);
+}
+
+/** Publish an immutable snapshot to Arcade; returns its permanent id + URL. */
+export async function publishArtifact(token: string, req: PublishRequest): Promise<PublishResponse> {
+  const resp = await fetch(`${base()}/api/artifacts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(req),
+  });
+  return (await readOk(resp)) as PublishResponse;
 }
