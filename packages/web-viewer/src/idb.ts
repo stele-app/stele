@@ -242,6 +242,18 @@ export async function libraryUpsert(partial: Omit<LibraryEntry, 'addedAt' | 'las
   await txComplete(tx);
 }
 
+/**
+ * Write a library entry verbatim — no timestamp/count bumping. Used by cloud
+ * sync to land a remote entry while preserving its addedAt / lastOpenedAt /
+ * openCount (unlike libraryUpsert, which is for a fresh local open).
+ */
+export async function libraryPutRaw(entry: LibraryEntry): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
+  tx.objectStore(STORE_LIBRARY).put(entry);
+  await txComplete(tx);
+}
+
 /** All library entries, most-recently-opened first. */
 export async function libraryList(): Promise<LibraryEntry[]> {
   const db = await open();

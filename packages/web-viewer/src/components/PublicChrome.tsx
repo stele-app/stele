@@ -10,6 +10,8 @@
 
 import { Link } from 'react-router-dom';
 import { T } from '../publicTheme';
+import { useAuth } from '../auth';
+import { ARCADE_API_URL } from '../arcade';
 
 const NAV_LINKS: Array<{ to: string; label: string }> = [
   { to: '/how', label: 'How' },
@@ -19,6 +21,30 @@ const NAV_LINKS: Array<{ to: string; label: string }> = [
   { to: '/library', label: 'Library' },
   { to: '/settings', label: 'Settings' },
 ];
+
+/**
+ * Account entry — only shown when Arcade is configured for this build, so the
+ * anonymous viewer stays uncluttered. Reflects sign-in state.
+ */
+function AccountNavItem({ current }: { current?: string }) {
+  const { signedIn, user } = useAuth();
+  const active = current === '/account';
+  return (
+    <Link
+      to="/account"
+      style={{
+        padding: '6px 10px',
+        fontSize: 13,
+        color: active || signedIn ? T.accent : T.textMuted,
+        textDecoration: 'none',
+        fontWeight: active || signedIn ? 500 : 400,
+        fontFamily: T.fontSans,
+      }}
+    >
+      {signedIn ? `@${user?.handle ?? 'account'}` : 'Sign in'}
+    </Link>
+  );
+}
 
 export function PublicHeader({ mode, current }: { mode: 'home' | 'sub'; current?: string }) {
   return (
@@ -64,6 +90,7 @@ export function PublicHeader({ mode, current }: { mode: 'home' | 'sub'; current?
             {link.label}
           </Link>
         ))}
+        {ARCADE_API_URL ? <AccountNavItem current={current} /> : null}
       </nav>
     </header>
   );

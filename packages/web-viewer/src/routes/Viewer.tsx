@@ -28,6 +28,7 @@ import {
 import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
+import { mirrorUp } from '../librarySync';
 import { shareArtifact } from '../share';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -282,12 +283,15 @@ export default function Viewer() {
     // For local: artifacts the URL is a synthetic id — fall back to the
     // captured filename when the manifest doesn't supply a name.
     const title = manifest?.name || fetchState.localFilename || filenameFromUrl(src);
-    libraryUpsert({
+    const entry = {
       src,
       title,
       archetype: manifest?.archetype ?? 'self-contained',
       serverHost: manifest?.archetype === 'client-view' && manifest.server ? hostOf(manifest.server) : undefined,
-    }).catch(() => {/* IDB unavailable — skip */});
+    };
+    libraryUpsert(entry).catch(() => {/* IDB unavailable — skip */});
+    // Mirror up to Arcade if signed in — best-effort, no-op otherwise.
+    mirrorUp(entry).catch(() => {/* offline / signed out — skip */});
   }, [src, fetchState, manifest, parseErr]);
 
   // Attach bridge to the iframe.
