@@ -1,41 +1,50 @@
 /**
- * /account — sign in to Arcade (single-user) and manage the session.
+ * /account — sign in to Arcade with Google or GitHub, and manage the session.
  *
- * Signed out: paste the bootstrap secret once; it's exchanged for a session
- * token (the secret itself is never stored). Signed in: shows the handle, a
- * "Sync now" control, and sign-out. Light theme — this is a front-door page.
+ * Signed out: "Continue with Google / GitHub" navigates the window to
+ * arcade-api's `/auth/:provider/start`; the provider bounces back here with the
+ * session token in the URL fragment (`#token=…&handle=…&id=…`), which we read
+ * once, store, then strip. Signed in: handle, "Sync now", sign-out. Light theme.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
 import { T } from '../publicTheme';
 import { useAuth } from '../auth';
-import { ARCADE_API_URL } from '../arcade';
+import { ARCADE_API_URL, authStartUrl, type OAuthProvider } from '../arcade';
 import { syncLibrary } from '../librarySync';
 
 export default function Account() {
-  const { signedIn, user, signIn, signOut } = useAuth();
-  const [secret, setSecret] = useState('');
-  const [busy, setBusy] = useState(false);
+  const { signedIn, user, applySession, signOut } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<{ state: 'idle' | 'syncing' | 'done' | 'error'; msg?: string }>({ state: 'idle' });
 
   const configured = !!ARCADE_API_URL;
 
-  const handleSignIn = async () => {
-    const s = secret.trim();
-    if (!s) { setError('Paste your bootstrap secret.'); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      await signIn(s);
-      setSecret('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
+  // Complete an OAuth return: the fragment carries the session (or an error).
+  useEffect(() => {
+    if (!window.location.hash || window.location.hash.length < 2) return;
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const token = params.get('token');
+    const handle = params.get('handle');
+    const id = params.get('id');
+    const errMsg = params.get('error');
+    if (token && handle && id) {
+      applySession(token, { id, handle });
+    } else if (errMsg) {
+      setError(errMsg);
+    } else {
+      return;
     }
+    // Strip the fragment so a refresh/back doesn't replay it. Path routing is
+    // unaffected (BrowserRouter keys off pathname, not hash).
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [applySession]);
+
+  const startSignIn = (provider: OAuthProvider) => {
+    setError(null);
+    window.location.href = authStartUrl(provider, `${window.location.origin}/account`);
   };
 
   const handleSync = async () => {
@@ -49,6 +58,21 @@ export default function Account() {
       setSync({ state: 'error', msg: err instanceof Error ? err.message : String(err) });
     }
   };
+
+  const providerButton = (provider: OAuthProvider, label: string, primary: boolean) => (
+    <button
+      onClick={() => startSignIn(provider)}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+        width: '100%', boxSizing: 'border-box', padding: '11px 16px', borderRadius: 8,
+        border: primary ? 'none' : `1px solid ${T.borderStrong}`,
+        background: primary ? T.accent : T.bg, color: primary ? 'white' : T.text,
+        fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: T.fontSans,
+      }}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div style={{ minHeight: '100vh', background: T.bg, color: T.text, fontFamily: T.fontSans, display: 'flex', flexDirection: 'column' }}>
@@ -71,43 +95,20 @@ export default function Account() {
 
           {configured && !signedIn && (
             <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, background: T.bg }}>
-              <label htmlFor="secret" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 8 }}>
-                Bootstrap secret
-              </label>
-              <input
-                id="secret"
-                type="password"
-                autoComplete="off"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !busy) handleSignIn(); }}
-                placeholder="paste your secret"
-                disabled={busy}
-                style={{
-                  width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 6,
-                  border: `1px solid ${T.borderStrong}`, background: T.bg, color: T.text,
-                  fontSize: 13, fontFamily: T.fontMono, outline: 'none', marginBottom: 12,
-                }}
-              />
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 14 }}>
+                Sign in
+              </div>
               {error && (
                 <div style={{ padding: '10px 12px', borderRadius: 6, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, marginBottom: 12, wordBreak: 'break-word' }}>
                   {error}
                 </div>
               )}
-              <button
-                onClick={handleSignIn}
-                disabled={busy || !secret.trim()}
-                style={{
-                  padding: '9px 20px', borderRadius: 8, border: 'none',
-                  background: busy || !secret.trim() ? '#bfdbfe' : T.accent, color: 'white',
-                  fontSize: 14, fontWeight: 600, cursor: busy || !secret.trim() ? 'not-allowed' : 'pointer',
-                  fontFamily: T.fontSans,
-                }}
-              >
-                {busy ? 'Signing in…' : 'Sign in'}
-              </button>
-              <p style={{ fontSize: 12, color: T.textFaint, marginTop: 14, marginBottom: 0, lineHeight: 1.5 }}>
-                The secret is exchanged for a session token and never stored. It's the single-user login for now — magic-link comes when accounts open to others.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {providerButton('google', 'Continue with Google', true)}
+                {providerButton('github', 'Continue with GitHub', false)}
+              </div>
+              <p style={{ fontSize: 12, color: T.textFaint, marginTop: 16, marginBottom: 0, lineHeight: 1.5 }}>
+                We use your provider only to confirm a verified email — that email is your Arcade identity, so Google and GitHub sign-ins for the same address land in the same account. No posts, no contacts.
               </p>
             </div>
           )}

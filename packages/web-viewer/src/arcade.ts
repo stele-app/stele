@@ -16,6 +16,7 @@ export const ARCADE_API_URL: string | undefined = import.meta.env.VITE_ARCADE_AP
 
 export type Archetype = 'self-contained' | 'client-view' | 'paired' | 'rooms';
 export type Visibility = 'private' | 'unlisted' | 'public';
+export type OAuthProvider = 'google' | 'github';
 
 export interface ArcadeUser {
   id: string;
@@ -84,9 +85,19 @@ async function readOk(resp: Response): Promise<unknown> {
 }
 
 /**
- * Exchange the single-user bootstrap secret for a session token. The account is
- * created on the very first call (needs a { handle, email } body then — done
- * once out-of-band); after that the secret alone returns a fresh token.
+ * The top-level URL that begins a "Sign in with Google/GitHub" flow. Navigate
+ * the whole window here (not fetch — the browser must follow the redirects to
+ * the provider and back). arcade-api bounces the browser back to `returnUrl`
+ * with `#token=…&handle=…&id=…` (or `#error=…`) in the fragment.
+ */
+export function authStartUrl(provider: OAuthProvider, returnUrl: string): string {
+  return `${base()}/auth/${provider}/start?return=${encodeURIComponent(returnUrl)}`;
+}
+
+/**
+ * Retained for the local **stdio** MCP and dev tooling; the web UI no longer
+ * calls this (it uses {@link authStartUrl}). Exchanges the single-user bootstrap
+ * secret for a session token.
  */
 export async function bootstrapLogin(secret: string): Promise<BootstrapResponse> {
   let resp: Response;
