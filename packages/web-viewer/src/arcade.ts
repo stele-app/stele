@@ -177,3 +177,17 @@ export async function getGallery(
 export function artifactSourceUrl(id: string): string {
   return `${base()}/a/${id}.stele`;
 }
+
+/**
+ * Fire-and-forget: bump an artifact's play count on open. `keepalive` lets the
+ * request outlive the navigation that follows. Never throws — a lost beacon is
+ * not worth a broken open.
+ */
+export function recordPlay(id: string): void {
+  if (!ARCADE_API_URL) return;
+  try {
+    void fetch(`${base()}/a/${id}/play`, { method: 'POST', keepalive: true }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}

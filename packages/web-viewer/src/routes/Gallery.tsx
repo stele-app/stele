@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
 import { T } from '../publicTheme';
-import { ARCADE_API_URL, artifactSourceUrl, getGallery, type GalleryCardDto } from '../arcade';
+import { ARCADE_API_URL, artifactSourceUrl, getGallery, recordPlay, type GalleryCardDto } from '../arcade';
 
 type Sort = 'new' | 'picks';
 
@@ -57,6 +57,7 @@ export default function Gallery() {
   };
 
   const open = (card: GalleryCardDto) => {
+    recordPlay(card.id); // fire-and-forget play beacon
     navigate(`/view?src=${encodeURIComponent(artifactSourceUrl(card.id))}`);
   };
 
