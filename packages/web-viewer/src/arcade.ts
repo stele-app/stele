@@ -191,3 +191,28 @@ export function recordPlay(id: string): void {
     /* ignore */
   }
 }
+
+// ── Account / admin ──────────────────────────────────────────────────────────
+
+export interface MeResponse {
+  id: string;
+  handle: string;
+  planTier: string;
+  isAdmin: boolean;
+}
+
+/** The signed-in user's profile (plan tier + admin flag). Drives account/admin UI. */
+export async function getMe(token: string): Promise<MeResponse> {
+  const resp = await fetch(`${base()}/api/me`, { headers: { authorization: `Bearer ${token}` } });
+  return (await readOk(resp)) as MeResponse;
+}
+
+/** Admin only: toggle an artifact's gallery Pick flag. */
+export async function setArtifactPick(token: string, id: string, isPick: boolean): Promise<void> {
+  const resp = await fetch(`${base()}/api/admin/artifacts/${id}/pick`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ isPick }),
+  });
+  await readOk(resp);
+}
