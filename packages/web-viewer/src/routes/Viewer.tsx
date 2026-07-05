@@ -29,8 +29,9 @@ import { attachBridge, type BridgeStatus } from '../bridge';
 import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import { mirrorUp } from '../librarySync';
-import { useAuth } from '../auth';
+import { useAuth, getStoredToken } from '../auth';
 import { shareArtifact } from '../share';
+import { ARCADE_API_URL } from '../arcade';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -41,6 +42,26 @@ type FetchState =
   | { kind: 'err'; message: string; reason: FetchErrReason };
 
 const PROXY_URL: string | undefined = import.meta.env.VITE_PROXY_URL;
+
+/**
+ * When the source is an Arcade artifact URL (`<ARCADE_API_URL>/a/…`) and the
+ * user is signed in, attach their session token so the resolver serves their
+ * own PRIVATE artifacts — an unauthenticated request for a private id 404s.
+ * For any other host we send nothing, keeping the request a "simple" CORS GET
+ * (no preflight) and never leaking the token off Arcade.
+ */
+function arcadeAuthHeaders(src: string): Record<string, string> {
+  if (!ARCADE_API_URL) return {};
+  try {
+    const s = new URL(src);
+    const a = new URL(ARCADE_API_URL);
+    if (s.origin !== a.origin || !s.pathname.startsWith('/a/')) return {};
+  } catch {
+    return {};
+  }
+  const token = getStoredToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
 
 async function fetchArtifact(src: string): Promise<{ source: string; contentType: string | null; viaProxy: boolean; localFilename?: string }> {
   // local:<id> — the artifact was opened from a local file (drop-to-open or
@@ -60,7 +81,7 @@ async function fetchArtifact(src: string): Promise<{ source: string; contentType
   // the proxy and stay fast. If the browser rejects the request before a response
   // arrives (TypeError), fall through to the proxy.
   try {
-    const resp = await fetch(src, { mode: 'cors' });
+    const resp = await fetch(src, { mode: 'cors', headers: arcadeAuthHeaders(src) });
     if (!resp.ok) {
       const err = new Error(`HTTP ${resp.status} ${resp.statusText}`);
       (err as Error & { httpStatus?: number }).httpStatus = resp.status;
