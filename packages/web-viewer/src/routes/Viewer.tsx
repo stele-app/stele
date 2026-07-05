@@ -120,10 +120,14 @@ function detectKind(url: string, contentType: string | null, localFilename?: str
   // the real extension we should detect from.
   const source = localFilename ?? url;
   const ext = source.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
-  if (ext === 'tsx') return 'tsx';
-  if (ext === 'jsx' || ext === 'stele') return 'jsx';
+  // `.stele` is the generic published format and is almost always TSX (Claude
+  // writes typed components). esbuild's tsx loader is a superset of jsx — it
+  // handles plain JSX too — so treat both tsx and stele as tsx and never choke
+  // on a type annotation. Only an explicit `.jsx` stays jsx.
+  if (ext === 'tsx' || ext === 'stele') return 'tsx';
+  if (ext === 'jsx') return 'jsx';
   if (ext === 'html' || ext === 'htm') return 'html';
-  return 'jsx';
+  return 'tsx';
 }
 
 function hashToken(): string | null {
