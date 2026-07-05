@@ -30,7 +30,7 @@ import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
-import { shareArtifact } from '../share';
+import { shareArtifact, publishToGallery } from '../share';
 import { ARCADE_API_URL } from '../arcade';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -454,6 +454,8 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   const { signedIn } = useAuth();
   const [shareState, setShareState] = useState<'idle' | 'publishing' | 'copied' | 'failed'>('idle');
   const [shareError, setShareError] = useState<string | null>(null);
+  const [galleryState, setGalleryState] = useState<'idle' | 'publishing' | 'done' | 'failed'>('idle');
+  const [galleryError, setGalleryError] = useState<string | null>(null);
   const isLocal = src.startsWith(LOCAL_SCHEME);
 
   // Note: any #token=… fragment is deliberately NOT included. Tokens are auth
@@ -487,6 +489,27 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
       setShareState('failed');
       setTimeout(() => setShareState('idle'), 2500);
     }
+  };
+
+  const handlePublishPublic = async () => {
+    if (galleryState === 'publishing') return;
+    setGalleryError(null);
+    setGalleryState('publishing');
+    const result = await publishToGallery(src, manifest?.name || 'Stele artifact');
+    if (result.kind === 'published') {
+      setGalleryState('done');
+      setTimeout(() => setGalleryState('idle'), 3000);
+      return;
+    }
+    setGalleryState('failed');
+    setGalleryError(
+      result.kind === 'needs-signin'
+        ? 'Sign in to publish to the gallery.'
+        : result.kind === 'missing-local'
+          ? "This artifact's source isn't in this browser anymore."
+          : result.error,
+    );
+    setTimeout(() => setGalleryState('idle'), 4000);
   };
 
   return (
@@ -539,6 +562,35 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
         </span>
       )}
       <div style={{ flex: 1 }} />
+      {signedIn && isLocal && (
+        <button
+          onClick={handlePublishPublic}
+          disabled={galleryState === 'publishing'}
+          title={
+            galleryState === 'failed' && galleryError
+              ? galleryError
+              : 'Publish publicly to the Arcade gallery — anyone can find and open it.'
+          }
+          style={{
+            padding: '4px 12px',
+            borderRadius: 6,
+            border: '1px solid',
+            borderColor: galleryState === 'done' ? '#14532d' : galleryState === 'failed' ? '#7f1d1d' : '#1e3a8a',
+            background: galleryState === 'done' ? '#0f2a1f' : galleryState === 'failed' ? '#1e1215' : '#0f1e3a',
+            color: galleryState === 'done' ? '#86efac' : galleryState === 'failed' ? '#fca5a5' : '#93c5fd',
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: galleryState === 'publishing' ? 'wait' : 'pointer',
+            opacity: galleryState === 'publishing' ? 0.7 : 1,
+            transition: 'all 150ms',
+          }}
+        >
+          {galleryState === 'publishing' ? 'Publishing…'
+            : galleryState === 'done' ? 'In the gallery ✓'
+            : galleryState === 'failed' ? 'Failed'
+            : 'Publish to gallery'}
+        </button>
+      )}
       <button
         onClick={handleShare}
         disabled={shareState === 'publishing'}
