@@ -13,6 +13,7 @@ import Pair from './routes/Pair';
 import ShareTarget from './routes/ShareTarget';
 import Account from './routes/Account';
 import Gallery from './routes/Gallery';
+import Policy from './routes/Policy';
 import DropToOpen from './components/DropToOpen';
 import FileHandler from './components/FileHandler';
 import { AuthProvider } from './auth';
@@ -39,6 +40,7 @@ createRoot(rootEl).render(
           <Route path="/share-target" element={<ShareTarget />} />
           <Route path="/account" element={<Account />} />
           <Route path="/gallery" element={<Gallery />} />
+          <Route path="/policy" element={<Policy />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

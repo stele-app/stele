@@ -126,6 +126,8 @@ export function PublicFooter() {
         fontFamily: T.fontSans,
       }}
     >
+      <Link to="/policy" style={{ color: T.textMuted, textDecoration: 'none' }}>Content policy</Link>
+      <span aria-hidden>·</span>
       <span>Australia</span>
       <span aria-hidden>·</span>
       <span>Apache 2.0</span>

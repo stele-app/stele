@@ -31,7 +31,7 @@ import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
 import { shareArtifact, publishToGallery } from '../share';
-import { ARCADE_API_URL } from '../arcade';
+import { ARCADE_API_URL, arcadeArtifactId, reportArtifact } from '../arcade';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -457,6 +457,8 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   const [galleryState, setGalleryState] = useState<'idle' | 'publishing' | 'done' | 'failed'>('idle');
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const isLocal = src.startsWith(LOCAL_SCHEME);
+  const reportId = arcadeArtifactId(src); // reportable only if it's an Arcade artifact
+  const [reported, setReported] = useState(false);
 
   // Note: any #token=… fragment is deliberately NOT included. Tokens are auth
   // credentials; sharing them grants access. A future "share with token"
@@ -510,6 +512,17 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           : result.error,
     );
     setTimeout(() => setGalleryState('idle'), 4000);
+  };
+
+  const handleReport = async () => {
+    if (!reportId) return;
+    const reason = window.prompt("Report this artifact for review — what's the problem? (optional)");
+    if (reason === null) return; // cancelled
+    const ok = await reportArtifact(reportId, reason.trim() || undefined);
+    if (ok) {
+      setReported(true);
+      setTimeout(() => setReported(false), 4000);
+    }
   };
 
   return (
@@ -622,6 +635,24 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           : shareState === 'failed' ? 'Share failed'
           : isLocal ? 'Publish & share' : 'Share link'}
       </button>
+      {reportId && (
+        <button
+          onClick={handleReport}
+          title="Report this artifact for review"
+          style={{
+            padding: '4px 10px',
+            borderRadius: 6,
+            border: '1px solid #334155',
+            background: 'transparent',
+            color: reported ? '#86efac' : '#64748b',
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          {reported ? 'Reported ✓' : 'Report'}
+        </button>
+      )}
       <span style={{ fontSize: 12, color: '#64748b' }}>{status}</span>
     </div>
   );
