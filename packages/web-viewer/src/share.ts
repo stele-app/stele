@@ -91,6 +91,57 @@ export async function shareArtifact(src: string, title: string): Promise<ShareAr
   return { kind: outcome, url: shareUrl };
 }
 
+/** Outcome of publishing a local artifact to the public gallery. */
+export type PublishGalleryResult =
+  | { kind: 'published'; viewUrl: string }
+  | { kind: 'missing-local' }
+  | { kind: 'needs-signin' }
+  | { kind: 'publish-failed'; error: string };
+
+/**
+ * Publish a LOCAL artifact to the public gallery (`visibility: 'public'`) — for
+ * signed-in accounts only. No anonymous fallback: public listing requires an
+ * account. Copies the resulting link to the clipboard (best-effort). Already-
+ * published artifacts can't be re-scoped here (immutable snapshot; there is no
+ * visibility-change endpoint yet).
+ */
+export async function publishToGallery(src: string, title: string): Promise<PublishGalleryResult> {
+  if (!src.startsWith(LOCAL_SCHEME)) {
+    return { kind: 'publish-failed', error: 'Only a newly-made (local) artifact can be published to the gallery.' };
+  }
+  const id = src.slice(LOCAL_SCHEME.length);
+  const local = await localArtifactGet(id);
+  if (!local) return { kind: 'missing-local' };
+
+  const token = ARCADE_API_URL ? getStoredToken() : null;
+  if (!token) return { kind: 'needs-signin' };
+
+  let archetype: Archetype = 'self-contained';
+  try {
+    const m = parseManifest(local.source);
+    if (m) archetype = m.archetype;
+  } catch {
+    /* malformed manifest — publish as self-contained */
+  }
+
+  try {
+    const pub = await arcadePublish(token, { source: local.source, title, visibility: 'public', archetype });
+    const viewUrl = publicViewerUrl(pub.url);
+    try {
+      await navigator.clipboard.writeText(viewUrl);
+    } catch {
+      /* clipboard blocked — non-fatal */
+    }
+    return { kind: 'published', viewUrl };
+  } catch (err) {
+    if (err instanceof ArcadeError && err.status === 401) {
+      clearStoredAuth();
+      return { kind: 'needs-signin' };
+    }
+    return { kind: 'publish-failed', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Wrap a raw artifact source URL in a /view?src= link rooted at this origin. */
 function publicViewerUrl(srcUrl: string): string {
   return `${window.location.origin}/view?src=${encodeURIComponent(srcUrl)}`;
