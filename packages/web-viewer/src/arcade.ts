@@ -141,3 +141,39 @@ export async function publishArtifact(token: string, req: PublishRequest): Promi
   });
   return (await readOk(resp)) as PublishResponse;
 }
+
+// ── Gallery (Social v0) — the public feed. No auth; anyone can browse. ────────
+
+export interface GalleryCardDto {
+  id: string;
+  title: string;
+  handle: string; // @creator
+  /** Ready poster URL, or null → the client renders a gradient+title fallback. */
+  posterUrl: string | null;
+  playCount: number;
+  isPick: boolean;
+  publishedAt: number; // unix ms
+}
+export interface GalleryResponse {
+  cards: GalleryCardDto[];
+  /** Opaque keyset cursor — pass as `cursor` for the next page; null = end. */
+  nextCursor: string | null;
+}
+
+/** The public gallery feed. No token. `sort` = 'new' (default) | 'picks'. */
+export async function getGallery(
+  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number } = {},
+): Promise<GalleryResponse> {
+  const q = new URLSearchParams();
+  if (opts.sort) q.set('sort', opts.sort);
+  if (opts.cursor) q.set('cursor', opts.cursor);
+  if (opts.limit) q.set('limit', String(opts.limit));
+  const qs = q.toString();
+  const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`);
+  return (await readOk(resp)) as GalleryResponse;
+}
+
+/** Raw source URL of a published artifact — feed the viewer via `/view?src=`. */
+export function artifactSourceUrl(id: string): string {
+  return `${base()}/a/${id}.stele`;
+}

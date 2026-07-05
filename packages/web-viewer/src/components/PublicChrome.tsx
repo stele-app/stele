@@ -74,6 +74,21 @@ export function PublicHeader({ mode, current }: { mode: 'home' | 'sub'; current?
         </Link>
       )}
       <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        {ARCADE_API_URL ? (
+          <Link
+            to="/gallery"
+            style={{
+              padding: '6px 10px',
+              fontSize: 13,
+              color: current === '/gallery' ? T.text : T.textMuted,
+              textDecoration: 'none',
+              fontWeight: current === '/gallery' ? 500 : 400,
+              fontFamily: T.fontSans,
+            }}
+          >
+            Gallery
+          </Link>
+        ) : null}
         {NAV_LINKS.map((link) => (
           <Link
             key={link.to}
