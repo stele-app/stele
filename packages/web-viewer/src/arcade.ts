@@ -216,3 +216,35 @@ export async function setArtifactPick(token: string, id: string, isPick: boolean
   });
   await readOk(resp);
 }
+
+// ── Reporting (Social v0) ────────────────────────────────────────────────────
+
+/** If `src` is an Arcade artifact URL (`<ARCADE_API_URL>/a/<id>[.stele]`), return
+ *  its id — the thing you can report; else null. */
+export function arcadeArtifactId(src: string): string | null {
+  if (!ARCADE_API_URL) return null;
+  try {
+    const s = new URL(src);
+    const a = new URL(ARCADE_API_URL);
+    if (s.origin !== a.origin) return null;
+    const m = s.pathname.match(/^\/a\/([0-9A-Za-z]+)(?:\.stele)?$/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Report an artifact for moderation (anonymous allowed). Returns true on 202. */
+export async function reportArtifact(id: string, reason?: string): Promise<boolean> {
+  if (!ARCADE_API_URL) return false;
+  try {
+    const resp = await fetch(`${base()}/a/${id}/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
