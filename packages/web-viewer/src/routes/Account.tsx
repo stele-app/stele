@@ -16,7 +16,7 @@ import { ARCADE_API_URL, authStartUrl, type OAuthProvider } from '../arcade';
 import { syncLibrary } from '../librarySync';
 
 export default function Account() {
-  const { signedIn, user, applySession, signOut } = useAuth();
+  const { signedIn, user, applySession, signOut, isAdmin, planTier, effectiveTier, viewAs, setViewAs } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<{ state: 'idle' | 'syncing' | 'done' | 'error'; msg?: string }>({ state: 'idle' });
 
@@ -149,6 +149,52 @@ export default function Account() {
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {configured && signedIn && isAdmin && (
+            <div style={{ marginTop: 16, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, background: T.bg }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 }}>Admin</div>
+              <p style={{ fontSize: 13, color: T.textMuted, marginTop: 0, marginBottom: 16 }}>
+                Preview the app as a plan tier. Your real tier is <strong>{planTier}</strong>.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, color: T.textMuted }}>View as:</span>
+                {(['free', 'paid'] as const).map((tier) => {
+                  const active = effectiveTier === tier;
+                  return (
+                    <button
+                      key={tier}
+                      onClick={() => setViewAs(viewAs === tier ? null : tier)}
+                      style={{
+                        padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                        fontFamily: T.fontSans, textTransform: 'capitalize',
+                        border: `1px solid ${active ? T.accent : T.border}`,
+                        background: active ? T.accentSoft : T.bg,
+                        color: active ? T.accent : T.textMuted,
+                      }}
+                    >
+                      {tier}
+                    </button>
+                  );
+                })}
+                {viewAs && (
+                  <button
+                    onClick={() => setViewAs(null)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+                      background: 'transparent', color: T.textMuted, fontSize: 12, cursor: 'pointer', fontFamily: T.fontSans,
+                    }}
+                  >
+                    Reset to my tier
+                  </button>
+                )}
+              </div>
+              {viewAs && (
+                <p style={{ fontSize: 12, color: T.accent, marginTop: 12, marginBottom: 0 }}>
+                  Previewing as <strong>{viewAs}</strong> — changes only what you see, not your account.
+                </p>
+              )}
             </div>
           )}
         </div>
