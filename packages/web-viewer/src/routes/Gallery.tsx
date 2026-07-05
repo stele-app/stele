@@ -12,7 +12,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
 import { T } from '../publicTheme';
-import { ARCADE_API_URL, artifactSourceUrl, getGallery, recordPlay, type GalleryCardDto } from '../arcade';
+import {
+  ARCADE_API_URL,
+  artifactSourceUrl,
+  getGallery,
+  recordPlay,
+  rerenderArtifact,
+  setArtifactPick,
+  setArtifactStatus,
+  type GalleryCardDto,
+} from '../arcade';
+import { useAuth } from '../auth';
 
 type Sort = 'new' | 'picks';
 
@@ -23,6 +33,7 @@ type LoadState =
 
 export default function Gallery() {
   const navigate = useNavigate();
+  const { isAdmin, token } = useAuth();
   const [sort, setSort] = useState<Sort>('new');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [loadingMore, setLoadingMore] = useState(false);
@@ -59,6 +70,34 @@ export default function Gallery() {
   const open = (card: GalleryCardDto) => {
     recordPlay(card.id); // fire-and-forget play beacon
     navigate(`/view?src=${encodeURIComponent(artifactSourceUrl(card.id))}`);
+  };
+
+  // Admin curation — mutate the local list optimistically.
+  const patchCard = (id: string, patch: Partial<GalleryCardDto>) =>
+    setState((s) => (s.kind === 'ready' ? { ...s, cards: s.cards.map((c) => (c.id === id ? { ...c, ...patch } : c)) } : s));
+
+  const handlePick = async (card: GalleryCardDto) => {
+    if (!token) return;
+    patchCard(card.id, { isPick: !card.isPick });
+    try {
+      await setArtifactPick(token, card.id, !card.isPick);
+    } catch {
+      patchCard(card.id, { isPick: card.isPick }); // revert on failure
+    }
+  };
+
+  const handleRerender = async (card: GalleryCardDto) => {
+    if (token) await rerenderArtifact(token, card.id).catch(() => {});
+  };
+
+  const handleRemove = async (card: GalleryCardDto) => {
+    if (!token || !window.confirm(`Remove "${card.title}" from the gallery?`)) return;
+    try {
+      await setArtifactStatus(token, card.id, 'removed');
+      setState((s) => (s.kind === 'ready' ? { ...s, cards: s.cards.filter((c) => c.id !== card.id) } : s));
+    } catch {
+      /* ignore */
+    }
   };
 
   return (
@@ -100,7 +139,17 @@ export default function Gallery() {
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
                     {state.cards.map((c) => (
-                      <Card key={c.id} card={c} onOpen={() => open(c)} />
+                      <div key={c.id} style={{ display: 'flex', flexDirection: 'column' }}>
+                        <Card card={c} onOpen={() => open(c)} />
+                        {isAdmin && token && (
+                          <AdminRow
+                            card={c}
+                            onPick={() => handlePick(c)}
+                            onRerender={() => handleRerender(c)}
+                            onRemove={() => handleRemove(c)}
+                          />
+                        )}
+                      </div>
                     ))}
                   </div>
                   {state.nextCursor && (
@@ -126,6 +175,45 @@ export default function Gallery() {
       </main>
 
       <PublicFooter />
+    </div>
+  );
+}
+
+/** Admin-only curation controls under each gallery card. */
+function AdminRow({
+  card,
+  onPick,
+  onRerender,
+  onRemove,
+}: {
+  card: GalleryCardDto;
+  onPick: () => void;
+  onRerender: () => Promise<void> | void;
+  onRemove: () => void;
+}) {
+  const [rerendering, setRerendering] = useState(false);
+  const btn: React.CSSProperties = {
+    padding: '3px 8px', borderRadius: 6, border: `1px solid ${T.border}`, background: T.bg,
+    color: T.textMuted, fontSize: 11, fontWeight: 500, cursor: 'pointer', fontFamily: T.fontSans,
+  };
+  return (
+    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+      <button
+        onClick={onPick}
+        style={{ ...btn, color: card.isPick ? T.accent : T.textMuted, borderColor: card.isPick ? T.accent : T.border }}
+      >
+        {card.isPick ? '★ Picked' : '☆ Pick'}
+      </button>
+      <button
+        onClick={async () => { setRerendering(true); await onRerender(); setTimeout(() => setRerendering(false), 2500); }}
+        style={btn}
+        title="Regenerate the thumbnail"
+      >
+        {rerendering ? '↻ …' : '↻'}
+      </button>
+      <button onClick={onRemove} style={{ ...btn, color: '#b91c1c' }} title="Remove from the gallery">
+        ✕
+      </button>
     </div>
   );
 }

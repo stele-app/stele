@@ -217,6 +217,29 @@ export async function setArtifactPick(token: string, id: string, isPick: boolean
   await readOk(resp);
 }
 
+/** Admin only: set an artifact's moderation status (kill switch). */
+export async function setArtifactStatus(
+  token: string,
+  id: string,
+  status: 'active' | 'paused' | 'removed',
+): Promise<void> {
+  const resp = await fetch(`${base()}/api/admin/artifacts/${id}/status`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status }),
+  });
+  await readOk(resp);
+}
+
+/** Admin only: regenerate an artifact's gallery thumbnail. */
+export async function rerenderArtifact(token: string, id: string): Promise<void> {
+  const resp = await fetch(`${base()}/api/admin/artifacts/${id}/render`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await readOk(resp);
+}
+
 // ── Reporting (Social v0) ────────────────────────────────────────────────────
 
 /** If `src` is an Arcade artifact URL (`<ARCADE_API_URL>/a/<id>[.stele]`), return
