@@ -47,10 +47,28 @@ export default function Policy() {
             <li>Spam, scams, or bulk low-effort submissions.</li>
           </ul>
 
+          <H>Profiles</H>
+          <P>
+            Signed-in creators get a public profile (a handle, an optional bio and links, and a grid of the
+            artifacts they've published publicly). The same rules above apply to profile text and links —
+            no spam, scams, harassment, impersonation, or links to prohibited content. Every profile has a{' '}
+            <strong>Report this profile</strong> control; reported profiles may be hidden and their bio and
+            links cleared. Avatars come from your sign-in provider and are served from Arcade, not hot-linked.
+          </P>
+
+          <H>Licensing &amp; remixing</H>
+          <P>
+            When you publish, you pick a license: <strong>MIT</strong> (others may remix if they credit you),{' '}
+            <strong>CC0</strong> (public domain — remix freely), or <strong>No remix</strong> (a custom
+            no-derivatives term). A “No remix” artifact hides the Remix button, and re-publishing it on
+            Arcade — or a close derivative of it — is a policy violation and may be removed. Because artifact
+            source is visible, this is enforced by these rules and reporting, not by technical restriction.
+          </P>
+
           <H>Reporting</H>
           <P>
-            Every published artifact has a <strong>Report</strong> control in the viewer. Anyone can use it —
-            no account required. Reports go to a review queue.
+            Every published artifact has a <strong>Report</strong> control in the viewer, and every profile
+            has one on its page. Anyone can use them — no account required. Reports go to a review queue.
           </P>
 
           <H>Enforcement</H>

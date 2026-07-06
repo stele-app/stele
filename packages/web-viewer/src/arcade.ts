@@ -17,6 +17,10 @@ export const ARCADE_API_URL: string | undefined = import.meta.env.VITE_ARCADE_AP
 export type Archetype = 'self-contained' | 'client-view' | 'paired' | 'rooms';
 export type Visibility = 'private' | 'unlisted' | 'public';
 export type OAuthProvider = 'google' | 'github';
+/** Publish category (Social v1). A fixed set; null/absent = uncategorized. */
+export type Category = 'games' | 'tools' | 'learning' | 'art';
+/** Publish license (Social v1): CC0 / MIT (default) / custom no-derivatives. */
+export type License = 'cc0' | 'mit' | 'nd';
 
 export interface ArcadeUser {
   id: string;
@@ -51,6 +55,16 @@ export interface PublishRequest {
   description?: string;
   visibility: Visibility;
   archetype?: Archetype;
+  /** Optional publish category (Social v1). Omitted/null = uncategorized. */
+  category?: Category | null;
+  /** Publish license (Social v1). Omitted → 'mit' (server default). */
+  license?: License;
+  /** Remix lineage (Social v1): the parent artifact id this remixes, if any. */
+  remixedFrom?: string | null;
+  remixCredit?: string | null;
+  remixNote?: string | null;
+  /** Creator's note — a short "why I made this / who it's for". */
+  note?: string | null;
 }
 
 export interface PublishResponse {
@@ -153,6 +167,22 @@ export interface GalleryCardDto {
   playCount: number;
   isPick: boolean;
   publishedAt: number; // unix ms
+  likeCount: number;
+  /** Whether the signed-in viewer has liked this — false when anonymous. */
+  likedByMe: boolean;
+  category: Category | null;
+  license: License;
+  /** Set when this artifact is a remix; null otherwise. */
+  remixedFrom: RemixLineageDto | null;
+  /** The creator's own short note, or null. */
+  note: string | null;
+}
+/** Displayed remix lineage on a card. title/handle null if the parent is gone. */
+export interface RemixLineageDto {
+  id: string;
+  title: string | null;
+  handle: string | null;
+  credit: string | null;
 }
 export interface GalleryResponse {
   cards: GalleryCardDto[];
@@ -160,22 +190,77 @@ export interface GalleryResponse {
   nextCursor: string | null;
 }
 
-/** The public gallery feed. No token. `sort` = 'new' (default) | 'picks'. */
+/** Optional Bearer header — the public feeds read it only for per-card likedByMe. */
+function maybeAuth(token?: string | null): Record<string, string> {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * The public gallery feed. `sort` = 'new' (default) | 'picks'. Pass the session
+ * token when signed in so cards come back with `likedByMe`.
+ */
 export async function getGallery(
-  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number } = {},
+  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number; category?: Category; token?: string | null } = {},
 ): Promise<GalleryResponse> {
   const q = new URLSearchParams();
   if (opts.sort) q.set('sort', opts.sort);
   if (opts.cursor) q.set('cursor', opts.cursor);
   if (opts.limit) q.set('limit', String(opts.limit));
+  if (opts.category) q.set('category', opts.category);
   const qs = q.toString();
-  const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`);
+  const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`, { headers: maybeAuth(opts.token) });
   return (await readOk(resp)) as GalleryResponse;
+}
+
+export interface LikeResponse {
+  likeCount: number;
+  likedByMe: boolean;
+}
+
+/** Like an artifact (account required). Returns the fresh like state. */
+export async function likeArtifact(token: string, id: string): Promise<LikeResponse> {
+  const resp = await fetch(`${base()}/a/${id}/like`, { method: 'POST', headers: maybeAuth(token) });
+  return (await readOk(resp)) as LikeResponse;
+}
+
+/** Remove your like (account required). Returns the fresh like state. */
+export async function unlikeArtifact(token: string, id: string): Promise<LikeResponse> {
+  const resp = await fetch(`${base()}/a/${id}/like`, { method: 'DELETE', headers: maybeAuth(token) });
+  return (await readOk(resp)) as LikeResponse;
 }
 
 /** Raw source URL of a published artifact — feed the viewer via `/view?src=`. */
 export function artifactSourceUrl(id: string): string {
   return `${base()}/a/${id}.stele`;
+}
+
+/** GET /a/:id — resolve an artifact's metadata (title, @handle, license). No auth. */
+export interface ArtifactMetaResponse {
+  id: string;
+  title: string;
+  description?: string;
+  archetype: Archetype;
+  visibility: Visibility;
+  createdAt: number;
+  license: License;
+  handle: string;
+  note: string | null;
+  sourceUrl: string;
+}
+export async function getArtifactMeta(id: string): Promise<ArtifactMetaResponse> {
+  const resp = await fetch(`${base()}/a/${id}`);
+  return (await readOk(resp)) as ArtifactMetaResponse;
+}
+
+/** Owner-only: set/clear an artifact's creator note after publish. Returns the saved note. */
+export async function setArtifactNote(token: string, id: string, note: string | null): Promise<string | null> {
+  const resp = await fetch(`${base()}/a/${id}/note`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+  const body = (await readOk(resp)) as { note: string | null };
+  return body.note;
 }
 
 /**
@@ -194,17 +279,75 @@ export function recordPlay(id: string): void {
 
 // ── Account / admin ──────────────────────────────────────────────────────────
 
+/** A profile link (website / GitHub / X / Discord …). */
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
 export interface MeResponse {
   id: string;
   handle: string;
   planTier: string;
   isAdmin: boolean;
+  /** Same-origin avatar URL (/a/u/:id/avatar), or null if the user has none. */
+  avatarUrl: string | null;
+  bio: string | null;
+  links: ProfileLink[];
 }
 
-/** The signed-in user's profile (plan tier + admin flag). Drives account/admin UI. */
+/** The signed-in user's profile (tier, admin flag, avatar, bio, links). Drives account/admin UI. */
 export async function getMe(token: string): Promise<MeResponse> {
   const resp = await fetch(`${base()}/api/me`, { headers: { authorization: `Bearer ${token}` } });
   return (await readOk(resp)) as MeResponse;
+}
+
+/** Edit your own profile (bio / links). POST (not PATCH — CORS omits PATCH). Returns the fresh MeResponse. */
+export async function updateProfile(
+  token: string,
+  patch: { bio?: string | null; links?: ProfileLink[] },
+): Promise<MeResponse> {
+  const resp = await fetch(`${base()}/api/me`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(patch),
+  });
+  return (await readOk(resp)) as MeResponse;
+}
+
+// ── Public profiles (Social v1) ──────────────────────────────────────────────
+
+export interface PublicProfileDto {
+  handle: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  links: ProfileLink[];
+}
+export interface ProfileResponse {
+  profile: PublicProfileDto;
+  artifacts: GalleryCardDto[];
+}
+
+/** A creator's public page: profile + their public artifacts. No auth required;
+ *  pass the token when signed in so cards come back with `likedByMe`. */
+export async function getProfile(handle: string, token?: string | null): Promise<ProfileResponse> {
+  const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}`, { headers: maybeAuth(token) });
+  return (await readOk(resp)) as ProfileResponse;
+}
+
+/** Report a profile for moderation (anonymous allowed). Returns true on 202. */
+export async function reportUser(handle: string, reason?: string): Promise<boolean> {
+  if (!ARCADE_API_URL) return false;
+  try {
+    const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Admin only: toggle an artifact's gallery Pick flag. */

@@ -14,9 +14,28 @@
 
 import { localArtifactGet, LOCAL_SCHEME } from './idb';
 import { publishArtifact, PublishError } from './publish';
-import { ARCADE_API_URL, ArcadeError, publishArtifact as arcadePublish } from './arcade';
+import {
+  ARCADE_API_URL,
+  ArcadeError,
+  publishArtifact as arcadePublish,
+  type Category,
+  type License,
+} from './arcade';
 import { getStoredToken, clearStoredAuth } from './auth';
 import { parseManifest, type Archetype } from '@stele/runtime';
+
+/**
+ * Options collected in the publish dialog and forwarded to the gallery publish.
+ * Grows with each social phase (PR5 remix credit).
+ */
+export interface PublishOptions {
+  category?: Category | null;
+  license?: License;
+  remixedFrom?: string | null;
+  remixCredit?: string | null;
+  remixNote?: string | null;
+  note?: string | null;
+}
 
 export type ShareOutcome = 'native' | 'copied' | 'failed';
 
@@ -105,7 +124,11 @@ export type PublishGalleryResult =
  * published artifacts can't be re-scoped here (immutable snapshot; there is no
  * visibility-change endpoint yet).
  */
-export async function publishToGallery(src: string, title: string): Promise<PublishGalleryResult> {
+export async function publishToGallery(
+  src: string,
+  title: string,
+  options: PublishOptions = {},
+): Promise<PublishGalleryResult> {
   if (!src.startsWith(LOCAL_SCHEME)) {
     return { kind: 'publish-failed', error: 'Only a newly-made (local) artifact can be published to the gallery.' };
   }
@@ -125,7 +148,18 @@ export async function publishToGallery(src: string, title: string): Promise<Publ
   }
 
   try {
-    const pub = await arcadePublish(token, { source: local.source, title, visibility: 'public', archetype });
+    const pub = await arcadePublish(token, {
+      source: local.source,
+      title,
+      visibility: 'public',
+      archetype,
+      category: options.category ?? null,
+      license: options.license,
+      remixedFrom: options.remixedFrom ?? null,
+      remixCredit: options.remixCredit ?? null,
+      remixNote: options.remixNote ?? null,
+      note: options.note ?? null,
+    });
     const viewUrl = publicViewerUrl(pub.url);
     try {
       await navigator.clipboard.writeText(viewUrl);

@@ -8,6 +8,7 @@
  * Footer is the same everywhere: trust signals (license, source, locale, version).
  */
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { T } from '../publicTheme';
 import { useAuth } from '../auth';
@@ -27,12 +28,16 @@ const NAV_LINKS: Array<{ to: string; label: string }> = [
  * anonymous viewer stays uncluttered. Reflects sign-in state.
  */
 function AccountNavItem({ current }: { current?: string }) {
-  const { signedIn, user } = useAuth();
+  const { signedIn, user, avatarUrl } = useAuth();
+  const [avatarBroke, setAvatarBroke] = useState(false);
   const active = current === '/account';
   return (
     <Link
       to="/account"
       style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
         padding: '6px 10px',
         fontSize: 13,
         color: active || signedIn ? T.accent : T.textMuted,
@@ -41,6 +46,16 @@ function AccountNavItem({ current }: { current?: string }) {
         fontFamily: T.fontSans,
       }}
     >
+      {signedIn && avatarUrl && !avatarBroke && (
+        <img
+          src={avatarUrl}
+          alt=""
+          width={20}
+          height={20}
+          onError={() => setAvatarBroke(true)}
+          style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', background: T.bgAlt }}
+        />
+      )}
       {signedIn ? `@${user?.handle ?? 'account'}` : 'Sign in'}
     </Link>
   );

@@ -12,11 +12,14 @@ import { Link } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
 import { T } from '../publicTheme';
 import { useAuth } from '../auth';
-import { ARCADE_API_URL, authStartUrl, type OAuthProvider } from '../arcade';
+import { ARCADE_API_URL, authStartUrl, updateProfile, type MeResponse, type OAuthProvider, type ProfileLink } from '../arcade';
 import { syncLibrary } from '../librarySync';
 
 export default function Account() {
-  const { signedIn, user, applySession, signOut, isAdmin, planTier, effectiveTier, viewAs, setViewAs } = useAuth();
+  const {
+    signedIn, user, token, applySession, signOut, isAdmin, planTier, effectiveTier, viewAs, setViewAs,
+    meLoaded, avatarUrl, bio, links, applyMe,
+  } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<{ state: 'idle' | 'syncing' | 'done' | 'error'; msg?: string }>({ state: 'idle' });
 
@@ -152,6 +155,17 @@ export default function Account() {
             </div>
           )}
 
+          {configured && signedIn && token && meLoaded && (
+            <ProfileEditor
+              token={token}
+              handle={user?.handle ?? ''}
+              avatarUrl={avatarUrl}
+              initialBio={bio}
+              initialLinks={links}
+              onSaved={applyMe}
+            />
+          )}
+
           {configured && signedIn && isAdmin && (
             <div style={{ marginTop: 16, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, background: T.bg }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 }}>Admin</div>
@@ -201,6 +215,138 @@ export default function Account() {
       </main>
 
       <PublicFooter />
+    </div>
+  );
+}
+
+const MAX_BIO = 160;
+const MAX_LINKS = 5;
+
+/** Edit your public profile (avatar preview, bio, links). Saves via POST /api/me. */
+function ProfileEditor({
+  token,
+  handle,
+  avatarUrl,
+  initialBio,
+  initialLinks,
+  onSaved,
+}: {
+  token: string;
+  handle: string;
+  avatarUrl: string | null;
+  initialBio: string | null;
+  initialLinks: ProfileLink[];
+  onSaved: (me: MeResponse) => void;
+}) {
+  const [bio, setBio] = useState(initialBio ?? '');
+  const [links, setLinks] = useState<ProfileLink[]>(initialLinks);
+  const [save, setSave] = useState<{ state: 'idle' | 'saving' | 'done' | 'error'; msg?: string }>({ state: 'idle' });
+
+  const setLink = (i: number, patch: Partial<ProfileLink>) =>
+    setLinks((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const addLink = () => setLinks((ls) => (ls.length < MAX_LINKS ? [...ls, { label: '', url: '' }] : ls));
+  const removeLink = (i: number) => setLinks((ls) => ls.filter((_, j) => j !== i));
+
+  const onSave = async () => {
+    setSave({ state: 'saving' });
+    // Drop blank rows; the server validates the rest.
+    const cleaned = links.map((l) => ({ label: l.label.trim(), url: l.url.trim() })).filter((l) => l.label && l.url);
+    try {
+      const me = await updateProfile(token, { bio: bio.trim() || null, links: cleaned });
+      setLinks(me.links);
+      onSaved(me);
+      setSave({ state: 'done', msg: 'Saved.' });
+    } catch (err) {
+      setSave({ state: 'error', msg: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const input: React.CSSProperties = {
+    padding: '7px 10px', borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg,
+    color: T.text, fontSize: 13, fontFamily: T.fontSans, boxSizing: 'border-box',
+  };
+
+  return (
+    <div style={{ marginTop: 16, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, background: T.bg }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>Public profile</div>
+        {handle && (
+          <Link to={`/u/${handle}`} style={{ fontSize: 12.5, color: T.accent, textDecoration: 'none' }}>
+            View your profile ↗
+          </Link>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 16 }}>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" width={44} height={44} style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', background: T.bgAlt }} />
+        ) : (
+          <div style={{ width: 44, height: 44, borderRadius: '50%', background: T.bgAlt, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.textFaint, fontFamily: T.fontSerif, fontSize: 20 }}>
+            {(handle || '?').slice(0, 1).toUpperCase()}
+          </div>
+        )}
+        <span style={{ fontSize: 12, color: T.textFaint }}>Your avatar comes from your sign-in provider.</span>
+      </div>
+
+      <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 4 }}>Bio</label>
+      <textarea
+        value={bio}
+        onChange={(e) => setBio(e.target.value.slice(0, MAX_BIO))}
+        rows={2}
+        placeholder="One line about you."
+        style={{ ...input, width: '100%', resize: 'vertical' }}
+      />
+      <div style={{ fontSize: 11, color: T.textFaint, textAlign: 'right', marginTop: 2 }}>{bio.length}/{MAX_BIO}</div>
+
+      <label style={{ display: 'block', fontSize: 12, color: T.textMuted, margin: '10px 0 6px' }}>Links</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {links.map((l, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              value={l.label}
+              onChange={(e) => setLink(i, { label: e.target.value })}
+              placeholder="Label"
+              style={{ ...input, width: 120, flexShrink: 0 }}
+            />
+            <input
+              value={l.url}
+              onChange={(e) => setLink(i, { url: e.target.value })}
+              placeholder="https://…"
+              style={{ ...input, flex: 1, minWidth: 0 }}
+            />
+            <button
+              onClick={() => removeLink(i)}
+              title="Remove link"
+              style={{ ...input, width: 30, padding: 0, cursor: 'pointer', color: T.textMuted, flexShrink: 0 }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        {links.length < MAX_LINKS && (
+          <button
+            onClick={addLink}
+            style={{ alignSelf: 'flex-start', background: 'none', border: `1px dashed ${T.borderStrong}`, borderRadius: 7, padding: '6px 12px', color: T.textMuted, fontSize: 12.5, cursor: 'pointer', fontFamily: T.fontSans }}
+          >
+            + Add link
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 18 }}>
+        <button
+          onClick={onSave}
+          disabled={save.state === 'saving'}
+          style={{
+            padding: '8px 16px', borderRadius: 8, border: 'none', background: T.accent, color: 'white',
+            fontSize: 13, fontWeight: 600, cursor: save.state === 'saving' ? 'wait' : 'pointer', fontFamily: T.fontSans,
+          }}
+        >
+          {save.state === 'saving' ? 'Saving…' : 'Save profile'}
+        </button>
+        {save.state === 'done' && <span style={{ fontSize: 12, color: T.textMuted }}>{save.msg}</span>}
+        {save.state === 'error' && <span style={{ fontSize: 12, color: '#b91c1c' }}>{save.msg}</span>}
+      </div>
     </div>
   );
 }
