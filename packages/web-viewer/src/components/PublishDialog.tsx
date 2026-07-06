@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { T } from '../publicTheme';
 import type { Category, License } from '../arcade';
 import type { PublishOptions } from '../share';
+import { getPendingRemix } from '../remix';
 
 const CATEGORIES: Array<{ value: Category; label: string }> = [
   { value: 'games', label: 'Games' },
@@ -38,6 +39,27 @@ export function PublishDialog({
 }) {
   const [category, setCategory] = useState<Category | null>(null);
   const [license, setLicense] = useState<License>('mit');
+  // Remix intent, read once. Applied only if the user leaves it confirmed.
+  const [pending] = useState(getPendingRemix);
+  const [isRemix, setIsRemix] = useState(!!pending);
+  const [credit, setCredit] = useState(
+    pending ? `Remixed from @${pending.sourceHandle}'s "${pending.sourceTitle}"` : '',
+  );
+  const [note, setNote] = useState('');
+
+  const submit = () =>
+    onSubmit({
+      category,
+      license,
+      ...(pending && isRemix
+        ? { remixedFrom: pending.sourceId, remixCredit: credit.trim() || null, remixNote: note.trim() || null }
+        : {}),
+    });
+
+  const input: React.CSSProperties = {
+    padding: '7px 10px', borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg,
+    color: T.text, fontSize: 13, fontFamily: T.fontSans, boxSizing: 'border-box', width: '100%',
+  };
 
   return (
     <div
@@ -63,6 +85,33 @@ export function PublishDialog({
           Publishing <strong style={{ color: T.text }}>{artifactTitle}</strong> publicly — anyone can find and open it
           in the gallery. This is permanent.
         </p>
+
+        {pending && (
+          <div style={{ marginBottom: 20, padding: 14, borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgAlt }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+              <input type="checkbox" checked={isRemix} onChange={(e) => setIsRemix(e.target.checked)} style={{ marginTop: 3 }} />
+              <span style={{ fontSize: 13, color: T.text }}>
+                This is a remix of <strong>@{pending.sourceHandle}</strong>’s “{pending.sourceTitle}”.
+              </span>
+            </label>
+            {isRemix && (
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, color: T.textMuted, marginBottom: 3 }}>
+                    Credit the original creator
+                  </label>
+                  <input value={credit} onChange={(e) => setCredit(e.target.value.slice(0, 280))} style={input} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11.5, color: T.textMuted, marginBottom: 3 }}>
+                    What did you change? <span style={{ color: T.textFaint }}>(optional)</span>
+                  </label>
+                  <textarea value={note} onChange={(e) => setNote(e.target.value.slice(0, 500))} rows={2} style={{ ...input, resize: 'vertical' }} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 8 }}>
           Category <span style={{ fontWeight: 400, color: T.textFaint }}>(optional)</span>
@@ -128,7 +177,7 @@ export function PublishDialog({
             Cancel
           </button>
           <button
-            onClick={() => onSubmit({ category, license })}
+            onClick={submit}
             disabled={busy}
             style={{
               padding: '8px 18px', borderRadius: 8, border: 'none', background: T.accent, color: 'white',

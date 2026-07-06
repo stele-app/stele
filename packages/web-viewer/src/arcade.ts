@@ -59,6 +59,10 @@ export interface PublishRequest {
   category?: Category | null;
   /** Publish license (Social v1). Omitted → 'mit' (server default). */
   license?: License;
+  /** Remix lineage (Social v1): the parent artifact id this remixes, if any. */
+  remixedFrom?: string | null;
+  remixCredit?: string | null;
+  remixNote?: string | null;
 }
 
 export interface PublishResponse {
@@ -166,6 +170,15 @@ export interface GalleryCardDto {
   likedByMe: boolean;
   category: Category | null;
   license: License;
+  /** Set when this artifact is a remix; null otherwise. */
+  remixedFrom: RemixLineageDto | null;
+}
+/** Displayed remix lineage on a card. title/handle null if the parent is gone. */
+export interface RemixLineageDto {
+  id: string;
+  title: string | null;
+  handle: string | null;
+  credit: string | null;
 }
 export interface GalleryResponse {
   cards: GalleryCardDto[];
@@ -215,6 +228,23 @@ export async function unlikeArtifact(token: string, id: string): Promise<LikeRes
 /** Raw source URL of a published artifact — feed the viewer via `/view?src=`. */
 export function artifactSourceUrl(id: string): string {
   return `${base()}/a/${id}.stele`;
+}
+
+/** GET /a/:id — resolve an artifact's metadata (title, @handle, license). No auth. */
+export interface ArtifactMetaResponse {
+  id: string;
+  title: string;
+  description?: string;
+  archetype: Archetype;
+  visibility: Visibility;
+  createdAt: number;
+  license: License;
+  handle: string;
+  sourceUrl: string;
+}
+export async function getArtifactMeta(id: string): Promise<ArtifactMetaResponse> {
+  const resp = await fetch(`${base()}/a/${id}`);
+  return (await readOk(resp)) as ArtifactMetaResponse;
 }
 
 /**

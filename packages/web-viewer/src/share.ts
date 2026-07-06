@@ -31,6 +31,9 @@ import { parseManifest, type Archetype } from '@stele/runtime';
 export interface PublishOptions {
   category?: Category | null;
   license?: License;
+  remixedFrom?: string | null;
+  remixCredit?: string | null;
+  remixNote?: string | null;
 }
 
 export type ShareOutcome = 'native' | 'copied' | 'failed';
@@ -151,6 +154,9 @@ export async function publishToGallery(
       archetype,
       category: options.category ?? null,
       license: options.license,
+      remixedFrom: options.remixedFrom ?? null,
+      remixCredit: options.remixCredit ?? null,
+      remixNote: options.remixNote ?? null,
     });
     const viewUrl = publicViewerUrl(pub.url);
     try {

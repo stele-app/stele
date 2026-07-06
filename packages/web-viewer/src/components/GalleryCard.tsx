@@ -140,6 +140,15 @@ export function GalleryCard({
               </>
             )}
           </div>
+          {card.remixedFrom && (
+            <div
+              title={card.remixedFrom.credit ?? undefined}
+              style={{ marginTop: 3, fontSize: 11.5, color: T.textFaint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              ⑂ remixed from {card.remixedFrom.handle ? `@${card.remixedFrom.handle}` : 'an artifact'}
+              {card.remixedFrom.title ? ` · ${card.remixedFrom.title}` : ''}
+            </div>
+          )}
         </div>
       </button>
       <LikeButton liked={card.likedByMe} count={card.likeCount} onToggle={onToggleLike} />

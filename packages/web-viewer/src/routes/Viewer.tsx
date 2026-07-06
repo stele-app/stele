@@ -32,7 +32,8 @@ import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
 import { shareArtifact, publishToGallery, type PublishOptions } from '../share';
 import { PublishDialog } from '../components/PublishDialog';
-import { ARCADE_API_URL, arcadeArtifactId, reportArtifact } from '../arcade';
+import { ARCADE_API_URL, arcadeArtifactId, getArtifactMeta, reportArtifact, type ArtifactMetaResponse } from '../arcade';
+import { setPendingRemix, clearPendingRemix } from '../remix';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -465,6 +466,34 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   const isLocal = src.startsWith(LOCAL_SCHEME);
   const reportId = arcadeArtifactId(src); // reportable only if it's an Arcade artifact
   const [reported, setReported] = useState(false);
+  // Remix is offered on published Arcade artifacts whose license allows it.
+  const [remixMeta, setRemixMeta] = useState<ArtifactMetaResponse | null>(null);
+  const [remixCopied, setRemixCopied] = useState(false);
+
+  useEffect(() => {
+    if (!reportId) {
+      setRemixMeta(null);
+      return;
+    }
+    let cancelled = false;
+    getArtifactMeta(reportId)
+      .then((m) => { if (!cancelled) setRemixMeta(m); })
+      .catch(() => { if (!cancelled) setRemixMeta(null); });
+    return () => { cancelled = true; };
+  }, [reportId]);
+
+  const handleRemix = async () => {
+    if (!remixMeta) return;
+    try {
+      const source = await (await fetch(src)).text();
+      await navigator.clipboard.writeText(source);
+    } catch {
+      /* clipboard may be blocked; the hint still guides them */
+    }
+    setPendingRemix({ sourceId: remixMeta.id, sourceTitle: remixMeta.title, sourceHandle: remixMeta.handle });
+    setRemixCopied(true);
+    setTimeout(() => setRemixCopied(false), 6000);
+  };
 
   // Note: any #token=… fragment is deliberately NOT included. Tokens are auth
   // credentials; sharing them grants access. A future "share with token"
@@ -505,6 +534,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     setGalleryState('publishing');
     const result = await publishToGallery(src, manifest?.name || 'Stele artifact', options);
     if (result.kind === 'published') {
+      clearPendingRemix(); // consumed — never let it attach to a later publish
       setShowPublish(false);
       setGalleryState('done');
       setTimeout(() => setGalleryState('idle'), 3000);
@@ -655,6 +685,30 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           : shareState === 'failed' ? 'Share failed'
           : isLocal ? 'Publish & share' : 'Share link'}
       </button>
+      {remixMeta && remixMeta.license !== 'nd' && (
+        <button
+          onClick={handleRemix}
+          title={
+            remixCopied
+              ? 'Source copied — paste it into your Claude, tweak it, then drop your version in and publish.'
+              : 'Copy this artifact’s source to remix it in your own Claude.'
+          }
+          style={{
+            padding: '4px 12px',
+            borderRadius: 6,
+            border: '1px solid',
+            borderColor: remixCopied ? '#14532d' : '#334155',
+            background: remixCopied ? '#0f2a1f' : 'transparent',
+            color: remixCopied ? '#86efac' : '#cbd5e1',
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'all 150ms',
+          }}
+        >
+          {remixCopied ? 'Copied — paste into Claude ✓' : '⑂ Remix'}
+        </button>
+      )}
       {reportId && (
         <button
           onClick={handleReport}
