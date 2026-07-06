@@ -593,71 +593,11 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
       borderBottom: '1px solid #1e293b',
       display: 'flex',
       alignItems: 'center',
-      gap: 12,
+      flexWrap: 'wrap',
+      gap: '8px 10px',
       flexShrink: 0,
       background: '#0a0f1d',
     }}>
-      <Link to="/" style={{
-        padding: '4px 10px',
-        borderRadius: 6,
-        border: '1px solid #334155',
-        color: '#94a3b8',
-        fontSize: 13,
-        textDecoration: 'none',
-      }}>Back</Link>
-      <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>
-        {manifest?.name || hostOf(src)}
-      </span>
-      {manifest && <ArchetypeBadge manifest={manifest} />}
-      {parseErr && (
-        <span style={{
-          fontSize: 11,
-          padding: '2px 6px',
-          borderRadius: 4,
-          background: '#1e1215',
-          color: '#fca5a5',
-          border: '1px solid #7f1d1d',
-        }}>
-          manifest error
-        </span>
-      )}
-      {viaProxy && (
-        <span
-          title="Direct fetch was blocked by CORS; the artifact came through the Stele CORS proxy."
-          style={{
-            fontSize: 11,
-            padding: '2px 6px',
-            borderRadius: 4,
-            background: '#2a1f0f',
-            color: '#fcd34d',
-            border: '1px solid #78350f',
-          }}
-        >
-          via proxy
-        </span>
-      )}
-      {remixMeta && (remixMeta.note || isNoteOwner) && (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 340 }}>
-          {remixMeta.note && (
-            <span
-              title={remixMeta.note}
-              style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            >
-              “{remixMeta.note}”
-            </span>
-          )}
-          {isNoteOwner && (
-            <button
-              onClick={editNote}
-              title="Edit your note"
-              style={{ flexShrink: 0, padding: '2px 8px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#64748b', fontSize: 11, cursor: 'pointer' }}
-            >
-              {remixMeta.note ? 'Edit note' : '+ Note'}
-            </button>
-          )}
-        </span>
-      )}
-      <div style={{ flex: 1 }} />
       {showPublish && (
         <PublishDialog
           artifactTitle={manifest?.name || 'this artifact'}
@@ -667,6 +607,80 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           onClose={() => setShowPublish(false)}
         />
       )}
+
+      {/* Left: back + title + badges + note. Grows to fill the row; the title
+          truncates instead of pushing the header wider than the screen. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 200px' }}>
+        <Link to="/" style={{
+          flexShrink: 0,
+          padding: '4px 10px',
+          borderRadius: 6,
+          border: '1px solid #334155',
+          color: '#94a3b8',
+          fontSize: 13,
+          textDecoration: 'none',
+        }}>Back</Link>
+        <span
+          title={manifest?.name || hostOf(src)}
+          style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {manifest?.name || hostOf(src)}
+        </span>
+        {manifest && <ArchetypeBadge manifest={manifest} />}
+        {parseErr && (
+          <span style={{
+            flexShrink: 0,
+            fontSize: 11,
+            padding: '2px 6px',
+            borderRadius: 4,
+            background: '#1e1215',
+            color: '#fca5a5',
+            border: '1px solid #7f1d1d',
+          }}>
+            manifest error
+          </span>
+        )}
+        {viaProxy && (
+          <span
+            title="Direct fetch was blocked by CORS; the artifact came through the Stele CORS proxy."
+            style={{
+              flexShrink: 0,
+              fontSize: 11,
+              padding: '2px 6px',
+              borderRadius: 4,
+              background: '#2a1f0f',
+              color: '#fcd34d',
+              border: '1px solid #78350f',
+            }}
+          >
+            via proxy
+          </span>
+        )}
+        {remixMeta && (remixMeta.note || isNoteOwner) && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 220 }}>
+            {remixMeta.note && (
+              <span
+                title={remixMeta.note}
+                style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                “{remixMeta.note}”
+              </span>
+            )}
+            {isNoteOwner && (
+              <button
+                onClick={editNote}
+                title="Edit your note"
+                style={{ flexShrink: 0, padding: '2px 8px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#64748b', fontSize: 11, cursor: 'pointer' }}
+              >
+                {remixMeta.note ? 'Edit note' : '+ Note'}
+              </button>
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Right: action buttons — wrap to a second line on narrow screens. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
       {signedIn && isLocal && (
         <button
           onClick={() => {
@@ -785,7 +799,8 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           {reported ? 'Reported ✓' : 'Report'}
         </button>
       )}
-      <span style={{ fontSize: 12, color: '#64748b' }}>{status}</span>
+        <span style={{ fontSize: 12, color: '#64748b' }}>{status}</span>
+      </div>
     </div>
   );
 }
