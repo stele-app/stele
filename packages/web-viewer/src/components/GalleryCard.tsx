@@ -34,6 +34,12 @@ export const CATEGORY_LABELS: Record<string, string> = {
   art: 'Art',
 };
 
+export const LICENSE_LABELS: Record<string, string> = {
+  cc0: 'CC0',
+  mit: 'MIT',
+  nd: 'No remix',
+};
+
 export function GalleryCard({
   card,
   onOpen,
@@ -105,6 +111,15 @@ export function GalleryCard({
               ★ Pick
             </span>
           )}
+          <span
+            title={`License: ${LICENSE_LABELS[card.license] ?? card.license}`}
+            style={{
+              position: 'absolute', bottom: 8, left: 8, padding: '2px 7px', borderRadius: 999,
+              fontSize: 10.5, fontWeight: 600, background: 'rgba(255,255,255,0.9)', color: T.textMuted,
+            }}
+          >
+            {LICENSE_LABELS[card.license] ?? card.license}
+          </span>
         </div>
         <div style={{ padding: '12px 14px' }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

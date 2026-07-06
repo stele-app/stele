@@ -56,6 +56,15 @@ export default function Policy() {
             links cleared. Avatars come from your sign-in provider and are served from Arcade, not hot-linked.
           </P>
 
+          <H>Licensing &amp; remixing</H>
+          <P>
+            When you publish, you pick a license: <strong>MIT</strong> (others may remix if they credit you),{' '}
+            <strong>CC0</strong> (public domain — remix freely), or <strong>No remix</strong> (a custom
+            no-derivatives term). A “No remix” artifact hides the Remix button, and re-publishing it on
+            Arcade — or a close derivative of it — is a policy violation and may be removed. Because artifact
+            source is visible, this is enforced by these rules and reporting, not by technical restriction.
+          </P>
+
           <H>Reporting</H>
           <P>
             Every published artifact has a <strong>Report</strong> control in the viewer, and every profile

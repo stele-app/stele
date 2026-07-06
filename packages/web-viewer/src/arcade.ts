@@ -19,6 +19,8 @@ export type Visibility = 'private' | 'unlisted' | 'public';
 export type OAuthProvider = 'google' | 'github';
 /** Publish category (Social v1). A fixed set; null/absent = uncategorized. */
 export type Category = 'games' | 'tools' | 'learning' | 'art';
+/** Publish license (Social v1): CC0 / MIT (default) / custom no-derivatives. */
+export type License = 'cc0' | 'mit' | 'nd';
 
 export interface ArcadeUser {
   id: string;
@@ -55,6 +57,8 @@ export interface PublishRequest {
   archetype?: Archetype;
   /** Optional publish category (Social v1). Omitted/null = uncategorized. */
   category?: Category | null;
+  /** Publish license (Social v1). Omitted → 'mit' (server default). */
+  license?: License;
 }
 
 export interface PublishResponse {
@@ -161,6 +165,7 @@ export interface GalleryCardDto {
   /** Whether the signed-in viewer has liked this — false when anonymous. */
   likedByMe: boolean;
   category: Category | null;
+  license: License;
 }
 export interface GalleryResponse {
   cards: GalleryCardDto[];

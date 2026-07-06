@@ -14,16 +14,23 @@
 
 import { localArtifactGet, LOCAL_SCHEME } from './idb';
 import { publishArtifact, PublishError } from './publish';
-import { ARCADE_API_URL, ArcadeError, publishArtifact as arcadePublish, type Category } from './arcade';
+import {
+  ARCADE_API_URL,
+  ArcadeError,
+  publishArtifact as arcadePublish,
+  type Category,
+  type License,
+} from './arcade';
 import { getStoredToken, clearStoredAuth } from './auth';
 import { parseManifest, type Archetype } from '@stele/runtime';
 
 /**
  * Options collected in the publish dialog and forwarded to the gallery publish.
- * Grows with each social phase (PR4 license, PR5 remix credit).
+ * Grows with each social phase (PR5 remix credit).
  */
 export interface PublishOptions {
   category?: Category | null;
+  license?: License;
 }
 
 export type ShareOutcome = 'native' | 'copied' | 'failed';
@@ -143,6 +150,7 @@ export async function publishToGallery(
       visibility: 'public',
       archetype,
       category: options.category ?? null,
+      license: options.license,
     });
     const viewUrl = publicViewerUrl(pub.url);
     try {
