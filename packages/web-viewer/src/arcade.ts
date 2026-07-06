@@ -17,6 +17,8 @@ export const ARCADE_API_URL: string | undefined = import.meta.env.VITE_ARCADE_AP
 export type Archetype = 'self-contained' | 'client-view' | 'paired' | 'rooms';
 export type Visibility = 'private' | 'unlisted' | 'public';
 export type OAuthProvider = 'google' | 'github';
+/** Publish category (Social v1). A fixed set; null/absent = uncategorized. */
+export type Category = 'games' | 'tools' | 'learning' | 'art';
 
 export interface ArcadeUser {
   id: string;
@@ -51,6 +53,8 @@ export interface PublishRequest {
   description?: string;
   visibility: Visibility;
   archetype?: Archetype;
+  /** Optional publish category (Social v1). Omitted/null = uncategorized. */
+  category?: Category | null;
 }
 
 export interface PublishResponse {
@@ -156,6 +160,7 @@ export interface GalleryCardDto {
   likeCount: number;
   /** Whether the signed-in viewer has liked this — false when anonymous. */
   likedByMe: boolean;
+  category: Category | null;
 }
 export interface GalleryResponse {
   cards: GalleryCardDto[];
@@ -173,12 +178,13 @@ function maybeAuth(token?: string | null): Record<string, string> {
  * token when signed in so cards come back with `likedByMe`.
  */
 export async function getGallery(
-  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number; token?: string | null } = {},
+  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number; category?: Category; token?: string | null } = {},
 ): Promise<GalleryResponse> {
   const q = new URLSearchParams();
   if (opts.sort) q.set('sort', opts.sort);
   if (opts.cursor) q.set('cursor', opts.cursor);
   if (opts.limit) q.set('limit', String(opts.limit));
+  if (opts.category) q.set('category', opts.category);
   const qs = q.toString();
   const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`, { headers: maybeAuth(opts.token) });
   return (await readOk(resp)) as GalleryResponse;

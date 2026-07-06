@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
-import { GalleryCard } from '../components/GalleryCard';
+import { GalleryCard, CATEGORY_LABELS } from '../components/GalleryCard';
 import { T } from '../publicTheme';
 import {
   ARCADE_API_URL,
@@ -23,11 +23,13 @@ import {
   setArtifactPick,
   setArtifactStatus,
   unlikeArtifact,
+  type Category,
   type GalleryCardDto,
 } from '../arcade';
 import { useAuth } from '../auth';
 
 type Sort = 'new' | 'picks';
+const CATEGORIES: Category[] = ['games', 'tools', 'learning', 'art'];
 
 type LoadState =
   | { kind: 'loading' }
@@ -38,16 +40,17 @@ export default function Gallery() {
   const navigate = useNavigate();
   const { isAdmin, token } = useAuth();
   const [sort, setSort] = useState<Sort>('new');
+  const [category, setCategory] = useState<Category | null>(null);
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [loadingMore, setLoadingMore] = useState(false);
 
   const configured = !!ARCADE_API_URL;
 
   const load = useCallback(
-    async (which: Sort) => {
+    async (which: Sort, cat: Category | null) => {
       setState({ kind: 'loading' });
       try {
-        const page = await getGallery({ sort: which, token });
+        const page = await getGallery({ sort: which, category: cat ?? undefined, token });
         setState({ kind: 'ready', cards: page.cards, nextCursor: page.nextCursor });
       } catch (err) {
         setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -57,14 +60,14 @@ export default function Gallery() {
   );
 
   useEffect(() => {
-    if (configured) load(sort);
-  }, [configured, sort, load]);
+    if (configured) load(sort, category);
+  }, [configured, sort, category, load]);
 
   const loadMore = async () => {
     if (state.kind !== 'ready' || !state.nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await getGallery({ sort, cursor: state.nextCursor, token });
+      const page = await getGallery({ sort, category: category ?? undefined, cursor: state.nextCursor, token });
       setState({ kind: 'ready', cards: [...state.cards, ...page.cards], nextCursor: page.nextCursor });
     } catch {
       /* keep what we have — a "load more" miss shouldn't blow away the page */
@@ -143,9 +146,15 @@ export default function Gallery() {
 
           {configured && (
             <>
-              <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
                 <SortTab label="New" active={sort === 'new'} onClick={() => setSort('new')} />
                 <SortTab label="Picks" active={sort === 'picks'} onClick={() => setSort('picks')} />
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
+                <SortTab label="All" active={category === null} onClick={() => setCategory(null)} />
+                {CATEGORIES.map((c) => (
+                  <SortTab key={c} label={CATEGORY_LABELS[c]} active={category === c} onClick={() => setCategory(c)} />
+                ))}
               </div>
 
               {state.kind === 'loading' && <Status>Loading…</Status>}

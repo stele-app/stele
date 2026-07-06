@@ -27,6 +27,13 @@ export function plays(n: number): string {
   return `▶ ${c}`;
 }
 
+export const CATEGORY_LABELS: Record<string, string> = {
+  games: 'Games',
+  tools: 'Tools',
+  learning: 'Learning',
+  art: 'Art',
+};
+
 export function GalleryCard({
   card,
   onOpen,
@@ -111,6 +118,12 @@ export function GalleryCard({
               </>
             )}
             <span style={{ flexShrink: 0 }}>{plays(card.playCount)}</span>
+            {card.category && (
+              <>
+                <span aria-hidden>·</span>
+                <span style={{ flexShrink: 0 }}>{CATEGORY_LABELS[card.category] ?? card.category}</span>
+              </>
+            )}
           </div>
         </div>
       </button>

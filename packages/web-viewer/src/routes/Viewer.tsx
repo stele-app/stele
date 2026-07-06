@@ -30,7 +30,8 @@ import { getGranted, grantAll } from '../permissions';
 import { libraryUpsert, localArtifactGet, LOCAL_SCHEME } from '../idb';
 import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
-import { shareArtifact, publishToGallery } from '../share';
+import { shareArtifact, publishToGallery, type PublishOptions } from '../share';
+import { PublishDialog } from '../components/PublishDialog';
 import { ARCADE_API_URL, arcadeArtifactId, reportArtifact } from '../arcade';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -460,6 +461,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   const [shareError, setShareError] = useState<string | null>(null);
   const [galleryState, setGalleryState] = useState<'idle' | 'publishing' | 'done' | 'failed'>('idle');
   const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [showPublish, setShowPublish] = useState(false);
   const isLocal = src.startsWith(LOCAL_SCHEME);
   const reportId = arcadeArtifactId(src); // reportable only if it's an Arcade artifact
   const [reported, setReported] = useState(false);
@@ -497,16 +499,18 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     }
   };
 
-  const handlePublishPublic = async () => {
+  const handlePublishPublic = async (options: PublishOptions) => {
     if (galleryState === 'publishing') return;
     setGalleryError(null);
     setGalleryState('publishing');
-    const result = await publishToGallery(src, manifest?.name || 'Stele artifact');
+    const result = await publishToGallery(src, manifest?.name || 'Stele artifact', options);
     if (result.kind === 'published') {
+      setShowPublish(false);
       setGalleryState('done');
       setTimeout(() => setGalleryState('idle'), 3000);
       return;
     }
+    // Keep the dialog open and surface the failure inside it.
     setGalleryState('failed');
     setGalleryError(
       result.kind === 'needs-signin'
@@ -515,7 +519,6 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           ? "This artifact's source isn't in this browser anymore."
           : result.error,
     );
-    setTimeout(() => setGalleryState('idle'), 4000);
   };
 
   const handleReport = async () => {
@@ -579,9 +582,22 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
         </span>
       )}
       <div style={{ flex: 1 }} />
+      {showPublish && (
+        <PublishDialog
+          artifactTitle={manifest?.name || 'this artifact'}
+          busy={galleryState === 'publishing'}
+          error={galleryState === 'failed' ? galleryError : null}
+          onSubmit={handlePublishPublic}
+          onClose={() => setShowPublish(false)}
+        />
+      )}
       {signedIn && isLocal && (
         <button
-          onClick={handlePublishPublic}
+          onClick={() => {
+            setGalleryState('idle');
+            setGalleryError(null);
+            setShowPublish(true);
+          }}
           disabled={galleryState === 'publishing'}
           title={
             galleryState === 'failed' && galleryError
