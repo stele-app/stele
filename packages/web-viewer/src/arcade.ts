@@ -153,6 +153,9 @@ export interface GalleryCardDto {
   playCount: number;
   isPick: boolean;
   publishedAt: number; // unix ms
+  likeCount: number;
+  /** Whether the signed-in viewer has liked this — false when anonymous. */
+  likedByMe: boolean;
 }
 export interface GalleryResponse {
   cards: GalleryCardDto[];
@@ -160,17 +163,42 @@ export interface GalleryResponse {
   nextCursor: string | null;
 }
 
-/** The public gallery feed. No token. `sort` = 'new' (default) | 'picks'. */
+/** Optional Bearer header — the public feeds read it only for per-card likedByMe. */
+function maybeAuth(token?: string | null): Record<string, string> {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * The public gallery feed. `sort` = 'new' (default) | 'picks'. Pass the session
+ * token when signed in so cards come back with `likedByMe`.
+ */
 export async function getGallery(
-  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number } = {},
+  opts: { sort?: 'new' | 'picks'; cursor?: string; limit?: number; token?: string | null } = {},
 ): Promise<GalleryResponse> {
   const q = new URLSearchParams();
   if (opts.sort) q.set('sort', opts.sort);
   if (opts.cursor) q.set('cursor', opts.cursor);
   if (opts.limit) q.set('limit', String(opts.limit));
   const qs = q.toString();
-  const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`);
+  const resp = await fetch(`${base()}/api/gallery${qs ? `?${qs}` : ''}`, { headers: maybeAuth(opts.token) });
   return (await readOk(resp)) as GalleryResponse;
+}
+
+export interface LikeResponse {
+  likeCount: number;
+  likedByMe: boolean;
+}
+
+/** Like an artifact (account required). Returns the fresh like state. */
+export async function likeArtifact(token: string, id: string): Promise<LikeResponse> {
+  const resp = await fetch(`${base()}/a/${id}/like`, { method: 'POST', headers: maybeAuth(token) });
+  return (await readOk(resp)) as LikeResponse;
+}
+
+/** Remove your like (account required). Returns the fresh like state. */
+export async function unlikeArtifact(token: string, id: string): Promise<LikeResponse> {
+  const resp = await fetch(`${base()}/a/${id}/like`, { method: 'DELETE', headers: maybeAuth(token) });
+  return (await readOk(resp)) as LikeResponse;
 }
 
 /** Raw source URL of a published artifact — feed the viewer via `/view?src=`. */
@@ -243,9 +271,10 @@ export interface ProfileResponse {
   artifacts: GalleryCardDto[];
 }
 
-/** A creator's public page: profile + their public artifacts. No auth required. */
-export async function getProfile(handle: string): Promise<ProfileResponse> {
-  const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}`);
+/** A creator's public page: profile + their public artifacts. No auth required;
+ *  pass the token when signed in so cards come back with `likedByMe`. */
+export async function getProfile(handle: string, token?: string | null): Promise<ProfileResponse> {
+  const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}`, { headers: maybeAuth(token) });
   return (await readOk(resp)) as ProfileResponse;
 }
 

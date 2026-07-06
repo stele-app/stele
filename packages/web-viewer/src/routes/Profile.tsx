@@ -10,13 +10,17 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { PublicHeader, PublicFooter } from '../components/PublicChrome';
 import { GalleryCard } from '../components/GalleryCard';
 import { T } from '../publicTheme';
+import { useAuth } from '../auth';
 import {
   ARCADE_API_URL,
   ArcadeError,
   artifactSourceUrl,
   getProfile,
+  likeArtifact,
   recordPlay,
   reportUser,
+  unlikeArtifact,
+  type GalleryCardDto,
   type ProfileResponse,
 } from '../arcade';
 
@@ -62,6 +66,7 @@ function Avatar({ url, handle }: { url: string | null; handle: string }) {
 export default function Profile() {
   const { handle = '' } = useParams();
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
 
   const configured = !!ARCADE_API_URL;
@@ -70,7 +75,7 @@ export default function Profile() {
     if (!configured) return;
     let cancelled = false;
     setState({ kind: 'loading' });
-    getProfile(handle)
+    getProfile(handle, token)
       .then((data) => {
         if (!cancelled) setState({ kind: 'ready', data });
       })
@@ -82,7 +87,7 @@ export default function Profile() {
     return () => {
       cancelled = true;
     };
-  }, [configured, handle]);
+  }, [configured, handle, token]);
 
   const open = useCallback(
     (id: string) => {
@@ -91,6 +96,29 @@ export default function Profile() {
     },
     [navigate],
   );
+
+  // Optimistically flip a card's like; the parent owns the sign-in redirect.
+  const patchCard = (id: string, patch: Partial<GalleryCardDto>) =>
+    setState((s) =>
+      s.kind === 'ready'
+        ? { ...s, data: { ...s.data, artifacts: s.data.artifacts.map((c) => (c.id === id ? { ...c, ...patch } : c)) } }
+        : s,
+    );
+
+  const handleLike = async (card: GalleryCardDto) => {
+    if (!token) {
+      navigate('/account');
+      return;
+    }
+    const next = !card.likedByMe;
+    patchCard(card.id, { likedByMe: next, likeCount: card.likeCount + (next ? 1 : -1) });
+    try {
+      const res = next ? await likeArtifact(token, card.id) : await unlikeArtifact(token, card.id);
+      patchCard(card.id, { likedByMe: res.likedByMe, likeCount: res.likeCount });
+    } catch {
+      patchCard(card.id, { likedByMe: card.likedByMe, likeCount: card.likeCount });
+    }
+  };
 
   const report = async () => {
     const reason = window.prompt(`Report @${handle}'s profile? Optionally, what's wrong?`);
@@ -151,7 +179,13 @@ export default function Profile() {
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
                   {state.data.artifacts.map((c) => (
-                    <GalleryCard key={c.id} card={c} onOpen={() => open(c.id)} showHandle={false} />
+                    <GalleryCard
+                      key={c.id}
+                      card={c}
+                      onOpen={() => open(c.id)}
+                      onToggleLike={() => handleLike(c)}
+                      showHandle={false}
+                    />
                   ))}
                 </div>
               )}

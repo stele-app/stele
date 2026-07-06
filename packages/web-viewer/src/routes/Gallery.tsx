@@ -17,10 +17,12 @@ import {
   ARCADE_API_URL,
   artifactSourceUrl,
   getGallery,
+  likeArtifact,
   recordPlay,
   rerenderArtifact,
   setArtifactPick,
   setArtifactStatus,
+  unlikeArtifact,
   type GalleryCardDto,
 } from '../arcade';
 import { useAuth } from '../auth';
@@ -41,15 +43,18 @@ export default function Gallery() {
 
   const configured = !!ARCADE_API_URL;
 
-  const load = useCallback(async (which: Sort) => {
-    setState({ kind: 'loading' });
-    try {
-      const page = await getGallery({ sort: which });
-      setState({ kind: 'ready', cards: page.cards, nextCursor: page.nextCursor });
-    } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-    }
-  }, []);
+  const load = useCallback(
+    async (which: Sort) => {
+      setState({ kind: 'loading' });
+      try {
+        const page = await getGallery({ sort: which, token });
+        setState({ kind: 'ready', cards: page.cards, nextCursor: page.nextCursor });
+      } catch (err) {
+        setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [token],
+  );
 
   useEffect(() => {
     if (configured) load(sort);
@@ -59,12 +64,28 @@ export default function Gallery() {
     if (state.kind !== 'ready' || !state.nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await getGallery({ sort, cursor: state.nextCursor });
+      const page = await getGallery({ sort, cursor: state.nextCursor, token });
       setState({ kind: 'ready', cards: [...state.cards, ...page.cards], nextCursor: page.nextCursor });
     } catch {
       /* keep what we have — a "load more" miss shouldn't blow away the page */
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  // Like/unlike with an optimistic flip; the parent owns the sign-in redirect.
+  const handleLike = async (card: GalleryCardDto) => {
+    if (!token) {
+      navigate('/account');
+      return;
+    }
+    const next = !card.likedByMe;
+    patchCard(card.id, { likedByMe: next, likeCount: card.likeCount + (next ? 1 : -1) });
+    try {
+      const res = next ? await likeArtifact(token, card.id) : await unlikeArtifact(token, card.id);
+      patchCard(card.id, { likedByMe: res.likedByMe, likeCount: res.likeCount });
+    } catch {
+      patchCard(card.id, { likedByMe: card.likedByMe, likeCount: card.likeCount }); // revert
     }
   };
 
@@ -141,7 +162,7 @@ export default function Gallery() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
                     {state.cards.map((c) => (
                       <div key={c.id} style={{ display: 'flex', flexDirection: 'column' }}>
-                        <GalleryCard card={c} onOpen={() => open(c)} />
+                        <GalleryCard card={c} onOpen={() => open(c)} onToggleLike={() => handleLike(c)} />
                         {isAdmin && token && (
                           <AdminRow
                             card={c}

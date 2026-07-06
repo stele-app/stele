@@ -31,81 +31,114 @@ export function GalleryCard({
   card,
   onOpen,
   showHandle = true,
+  onToggleLike,
 }: {
   card: GalleryCardDto;
   onOpen: () => void;
   /** Hide the @handle line on a profile grid (every card is that same person). */
   showHandle?: boolean;
+  /** Toggle the like. The parent owns the sign-in check + optimistic update. When
+   *  omitted, the heart still shows the count but isn't interactive. */
+  onToggleLike?: () => void;
 }) {
   const [broke, setBroke] = useState(false);
   const showPoster = !!card.posterUrl && !broke;
   return (
-    <button
-      onClick={onOpen}
-      aria-label={`Open ${card.title} by @${card.handle}`}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = T.accent;
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = T.border;
-      }}
-      style={{
-        display: 'flex', flexDirection: 'column', textAlign: 'left', padding: 0, overflow: 'hidden',
-        border: `1px solid ${T.border}`, borderRadius: 12, background: T.bg, cursor: 'pointer',
-        fontFamily: T.fontSans, transition: 'border-color 120ms', width: '100%',
-      }}
-    >
-      <div
+    // Relative wrapper so the like button can overlay the card without nesting a
+    // <button> inside the card <button> (invalid HTML).
+    <div style={{ position: 'relative', width: '100%' }}>
+      <button
+        onClick={onOpen}
+        aria-label={`Open ${card.title} by @${card.handle}`}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.borderColor = T.accent;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.borderColor = T.border;
+        }}
         style={{
-          position: 'relative', aspectRatio: '8 / 5', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', background: showPoster ? T.bgAlt : gradientFor(card.id),
+          display: 'flex', flexDirection: 'column', textAlign: 'left', padding: 0, overflow: 'hidden',
+          border: `1px solid ${T.border}`, borderRadius: 12, background: T.bg, cursor: 'pointer',
+          fontFamily: T.fontSans, transition: 'border-color 120ms', width: '100%',
         }}
       >
-        {showPoster ? (
-          <img
-            src={card.posterUrl ?? undefined}
-            alt=""
-            loading="lazy"
-            onError={() => setBroke(true)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-          />
-        ) : (
-          <span
-            style={{
-              fontFamily: T.fontSerif, fontSize: 19, fontWeight: 500, color: T.text, opacity: 0.5,
-              padding: '0 18px', textAlign: 'center',
-              display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            }}
-          >
-            {card.title}
-          </span>
-        )}
-        {card.isPick && (
-          <span
-            title="An editor's pick"
-            style={{
-              position: 'absolute', top: 8, left: 8, padding: '2px 8px', borderRadius: 999,
-              fontSize: 11, fontWeight: 600, background: T.accent, color: 'white',
-            }}
-          >
-            ★ Pick
-          </span>
-        )}
-      </div>
-      <div style={{ padding: '12px 14px' }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {card.title}
-        </div>
-        <div style={{ marginTop: 4, fontSize: 12.5, color: T.textMuted, display: 'flex', gap: 8, alignItems: 'center' }}>
-          {showHandle && (
-            <>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{card.handle}</span>
-              <span aria-hidden>·</span>
-            </>
+        <div
+          style={{
+            position: 'relative', aspectRatio: '8 / 5', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', background: showPoster ? T.bgAlt : gradientFor(card.id),
+          }}
+        >
+          {showPoster ? (
+            <img
+              src={card.posterUrl ?? undefined}
+              alt=""
+              loading="lazy"
+              onError={() => setBroke(true)}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          ) : (
+            <span
+              style={{
+                fontFamily: T.fontSerif, fontSize: 19, fontWeight: 500, color: T.text, opacity: 0.5,
+                padding: '0 18px', textAlign: 'center',
+                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}
+            >
+              {card.title}
+            </span>
           )}
-          <span style={{ flexShrink: 0 }}>{plays(card.playCount)}</span>
+          {card.isPick && (
+            <span
+              title="An editor's pick"
+              style={{
+                position: 'absolute', top: 8, left: 8, padding: '2px 8px', borderRadius: 999,
+                fontSize: 11, fontWeight: 600, background: T.accent, color: 'white',
+              }}
+            >
+              ★ Pick
+            </span>
+          )}
         </div>
-      </div>
+        <div style={{ padding: '12px 14px' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {card.title}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12.5, color: T.textMuted, display: 'flex', gap: 8, alignItems: 'center' }}>
+            {showHandle && (
+              <>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{card.handle}</span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span style={{ flexShrink: 0 }}>{plays(card.playCount)}</span>
+          </div>
+        </div>
+      </button>
+      <LikeButton liked={card.likedByMe} count={card.likeCount} onToggle={onToggleLike} />
+    </div>
+  );
+}
+
+/** Heart + count, overlaid on the poster's top-right. A sibling of the card
+ *  button (not nested), so clicking it never triggers "open". */
+function LikeButton({ liked, count, onToggle }: { liked: boolean; count: number; onToggle?: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={!onToggle}
+      aria-label={liked ? 'Unlike' : 'Like'}
+      aria-pressed={liked}
+      title={onToggle ? (liked ? 'Unlike' : 'Like') : 'Sign in to like'}
+      style={{
+        position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4,
+        padding: '3px 9px', borderRadius: 999, border: 'none',
+        background: 'rgba(255,255,255,0.92)', boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+        color: liked ? '#e11d48' : T.textMuted, fontSize: 12, fontWeight: 600,
+        cursor: onToggle ? 'pointer' : 'default', fontFamily: T.fontSans,
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>{liked ? '♥' : '♡'}</span>
+      {count > 0 && <span>{count}</span>}
     </button>
   );
 }
