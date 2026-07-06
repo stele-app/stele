@@ -194,17 +194,74 @@ export function recordPlay(id: string): void {
 
 // ── Account / admin ──────────────────────────────────────────────────────────
 
+/** A profile link (website / GitHub / X / Discord …). */
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
 export interface MeResponse {
   id: string;
   handle: string;
   planTier: string;
   isAdmin: boolean;
+  /** Same-origin avatar URL (/a/u/:id/avatar), or null if the user has none. */
+  avatarUrl: string | null;
+  bio: string | null;
+  links: ProfileLink[];
 }
 
-/** The signed-in user's profile (plan tier + admin flag). Drives account/admin UI. */
+/** The signed-in user's profile (tier, admin flag, avatar, bio, links). Drives account/admin UI. */
 export async function getMe(token: string): Promise<MeResponse> {
   const resp = await fetch(`${base()}/api/me`, { headers: { authorization: `Bearer ${token}` } });
   return (await readOk(resp)) as MeResponse;
+}
+
+/** Edit your own profile (bio / links). POST (not PATCH — CORS omits PATCH). Returns the fresh MeResponse. */
+export async function updateProfile(
+  token: string,
+  patch: { bio?: string | null; links?: ProfileLink[] },
+): Promise<MeResponse> {
+  const resp = await fetch(`${base()}/api/me`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(patch),
+  });
+  return (await readOk(resp)) as MeResponse;
+}
+
+// ── Public profiles (Social v1) ──────────────────────────────────────────────
+
+export interface PublicProfileDto {
+  handle: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  links: ProfileLink[];
+}
+export interface ProfileResponse {
+  profile: PublicProfileDto;
+  artifacts: GalleryCardDto[];
+}
+
+/** A creator's public page: profile + their public artifacts. No auth required. */
+export async function getProfile(handle: string): Promise<ProfileResponse> {
+  const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}`);
+  return (await readOk(resp)) as ProfileResponse;
+}
+
+/** Report a profile for moderation (anonymous allowed). Returns true on 202. */
+export async function reportUser(handle: string, reason?: string): Promise<boolean> {
+  if (!ARCADE_API_URL) return false;
+  try {
+    const resp = await fetch(`${base()}/api/u/${encodeURIComponent(handle)}/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Admin only: toggle an artifact's gallery Pick flag. */

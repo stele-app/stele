@@ -21,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { getMe, type ArcadeUser, type MeResponse } from './arcade';
+import { getMe, type ArcadeUser, type MeResponse, type ProfileLink } from './arcade';
 
 const TOKEN_KEY = 'stele:arcade:token';
 const USER_KEY = 'stele:arcade:user';
@@ -83,6 +83,14 @@ interface AuthState {
   /** Admin-only preview override; null = render my real tier. */
   viewAs: string | null;
   setViewAs: (tier: string | null) => void;
+  /** True once GET /api/me has resolved (distinguishes "loading" from "empty profile"). */
+  meLoaded: boolean;
+  /** The signed-in user's public profile fields (from GET /api/me), or null. */
+  avatarUrl: string | null;
+  bio: string | null;
+  links: ProfileLink[];
+  /** Replace the cached profile after an edit (updateProfile returns a fresh MeResponse). */
+  applyMe: (me: MeResponse) => void;
   /** Store a session obtained out-of-band (the OAuth return fragment). */
   applySession: (token: string, user: ArcadeUser) => void;
   signOut: () => void;
@@ -150,6 +158,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAdmin = profile?.isAdmin ?? false;
   const planTier = profile?.planTier ?? 'free';
   const effectiveTier = isAdmin && viewAs ? viewAs : planTier;
+  const meLoaded = profile !== null;
+  const avatarUrl = profile?.avatarUrl ?? null;
+  const bio = profile?.bio ?? null;
+  const links = profile?.links ?? [];
+
+  const applyMe = useCallback((me: MeResponse) => setProfile(me), []);
 
   const value = useMemo<AuthState>(
     () => ({
@@ -161,10 +175,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       effectiveTier,
       viewAs,
       setViewAs,
+      meLoaded,
+      avatarUrl,
+      bio,
+      links,
+      applyMe,
       applySession,
       signOut,
     }),
-    [token, user, isAdmin, planTier, effectiveTier, viewAs, setViewAs, applySession, signOut],
+    [token, user, isAdmin, planTier, effectiveTier, viewAs, setViewAs, meLoaded, avatarUrl, bio, links, applyMe, applySession, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
