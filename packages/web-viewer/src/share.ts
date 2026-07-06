@@ -34,6 +34,7 @@ export interface PublishOptions {
   remixedFrom?: string | null;
   remixCredit?: string | null;
   remixNote?: string | null;
+  note?: string | null;
 }
 
 export type ShareOutcome = 'native' | 'copied' | 'failed';
@@ -157,6 +158,7 @@ export async function publishToGallery(
       remixedFrom: options.remixedFrom ?? null,
       remixCredit: options.remixCredit ?? null,
       remixNote: options.remixNote ?? null,
+      note: options.note ?? null,
     });
     const viewUrl = publicViewerUrl(pub.url);
     try {

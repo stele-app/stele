@@ -39,6 +39,7 @@ export function PublishDialog({
 }) {
   const [category, setCategory] = useState<Category | null>(null);
   const [license, setLicense] = useState<License>('mit');
+  const [creatorNote, setCreatorNote] = useState('');
   // Remix intent, read once. Applied only if the user leaves it confirmed.
   const [pending] = useState(getPendingRemix);
   const [isRemix, setIsRemix] = useState(!!pending);
@@ -51,6 +52,7 @@ export function PublishDialog({
     onSubmit({
       category,
       license,
+      note: creatorNote.trim() || null,
       ...(pending && isRemix
         ? { remixedFrom: pending.sourceId, remixCredit: credit.trim() || null, remixNote: note.trim() || null }
         : {}),
@@ -81,10 +83,21 @@ export function PublishDialog({
         }}
       >
         <h2 style={{ fontFamily: T.fontSerif, fontSize: 22, fontWeight: 500, margin: 0 }}>Publish to the gallery</h2>
-        <p style={{ fontSize: 13.5, color: T.textMuted, margin: '6px 0 20px', lineHeight: 1.5 }}>
+        <p style={{ fontSize: 13.5, color: T.textMuted, margin: '6px 0 18px', lineHeight: 1.5 }}>
           Publishing <strong style={{ color: T.text }}>{artifactTitle}</strong> publicly — anyone can find and open it
           in the gallery. This is permanent.
         </p>
+
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6 }}>
+          Note <span style={{ fontWeight: 400, color: T.textFaint }}>(optional)</span>
+        </div>
+        <textarea
+          value={creatorNote}
+          onChange={(e) => setCreatorNote(e.target.value.slice(0, 500))}
+          rows={2}
+          placeholder="Why you made it, or who it's for — e.g. “made this for my daughter's class”."
+          style={{ ...input, resize: 'vertical', marginBottom: 20 }}
+        />
 
         {pending && (
           <div style={{ marginBottom: 20, padding: 14, borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgAlt }}>

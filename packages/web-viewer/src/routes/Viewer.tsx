@@ -32,7 +32,7 @@ import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
 import { shareArtifact, publishToGallery, type PublishOptions } from '../share';
 import { PublishDialog } from '../components/PublishDialog';
-import { ARCADE_API_URL, arcadeArtifactId, getArtifactMeta, reportArtifact, type ArtifactMetaResponse } from '../arcade';
+import { ARCADE_API_URL, arcadeArtifactId, getArtifactMeta, reportArtifact, setArtifactNote, type ArtifactMetaResponse } from '../arcade';
 import { setPendingRemix, clearPendingRemix } from '../remix';
 import PermissionDialog from '../components/PermissionDialog';
 
@@ -457,7 +457,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   status: string;
   viaProxy: boolean;
 }) {
-  const { signedIn } = useAuth();
+  const { signedIn, user } = useAuth();
   const [shareState, setShareState] = useState<'idle' | 'publishing' | 'copied' | 'failed'>('idle');
   const [shareError, setShareError] = useState<string | null>(null);
   const [galleryState, setGalleryState] = useState<'idle' | 'publishing' | 'done' | 'failed'>('idle');
@@ -492,7 +492,32 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     }
     setPendingRemix({ sourceId: remixMeta.id, sourceTitle: remixMeta.title, sourceHandle: remixMeta.handle });
     setRemixCopied(true);
-    setTimeout(() => setRemixCopied(false), 6000);
+    setTimeout(() => setRemixCopied(false), 12000);
+  };
+
+  // "Open in Claude" — Anthropic's supported claude:// deep link (desktop app
+  // only; a no-op elsewhere, where the copied source + hint is the path). The
+  // source can't fit in a URL, so we hand Claude the artifact link to fetch.
+  const claudeRemixUrl = remixMeta
+    ? `claude://claude.ai/new?q=${encodeURIComponent(
+        `Help me remix this Stele artifact — here's its source: ${src}\nFetch it, let's modify it together, then I'll publish my version to Arcade.`,
+      )}`
+    : null;
+
+  // The creator can edit their note after publish (metadata is mutable).
+  const isNoteOwner = !!remixMeta && !!user && user.handle === remixMeta.handle;
+  const editNote = async () => {
+    if (!remixMeta) return;
+    const token = getStoredToken();
+    if (!token) return;
+    const next = window.prompt("Your note on this artifact (why you made it / who it's for):", remixMeta.note ?? '');
+    if (next === null) return; // cancelled
+    try {
+      const saved = await setArtifactNote(token, remixMeta.id, next.trim() || null);
+      setRemixMeta({ ...remixMeta, note: saved });
+    } catch {
+      /* ignore */
+    }
   };
 
   // Note: any #token=… fragment is deliberately NOT included. Tokens are auth
@@ -611,6 +636,27 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           via proxy
         </span>
       )}
+      {remixMeta && (remixMeta.note || isNoteOwner) && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 340 }}>
+          {remixMeta.note && (
+            <span
+              title={remixMeta.note}
+              style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              “{remixMeta.note}”
+            </span>
+          )}
+          {isNoteOwner && (
+            <button
+              onClick={editNote}
+              title="Edit your note"
+              style={{ flexShrink: 0, padding: '2px 8px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#64748b', fontSize: 11, cursor: 'pointer' }}
+            >
+              {remixMeta.note ? 'Edit note' : '+ Note'}
+            </button>
+          )}
+        </span>
+      )}
       <div style={{ flex: 1 }} />
       {showPublish && (
         <PublishDialog
@@ -706,8 +752,20 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
             transition: 'all 150ms',
           }}
         >
-          {remixCopied ? 'Copied — paste into Claude ✓' : '⑂ Remix'}
+          {remixCopied ? 'Copied ✓' : '⑂ Remix'}
         </button>
+      )}
+      {remixCopied && claudeRemixUrl && (
+        <a
+          href={claudeRemixUrl}
+          title="Open a new Claude chat to remix this (Claude desktop app). On mobile/web, just paste the copied source into your Claude."
+          style={{
+            padding: '4px 12px', borderRadius: 6, border: '1px solid #1e3a8a', background: '#0f1e3a',
+            color: '#93c5fd', fontSize: 12, fontWeight: 500, textDecoration: 'none',
+          }}
+        >
+          Open in Claude ↗
+        </a>
       )}
       {reportId && (
         <button

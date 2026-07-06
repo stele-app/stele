@@ -140,6 +140,14 @@ export function GalleryCard({
               </>
             )}
           </div>
+          {card.note && (
+            <div
+              title={card.note}
+              style={{ marginTop: 5, fontSize: 12, color: T.textMuted, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              “{card.note}”
+            </div>
+          )}
           {card.remixedFrom && (
             <div
               title={card.remixedFrom.credit ?? undefined}

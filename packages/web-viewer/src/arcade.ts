@@ -63,6 +63,8 @@ export interface PublishRequest {
   remixedFrom?: string | null;
   remixCredit?: string | null;
   remixNote?: string | null;
+  /** Creator's note — a short "why I made this / who it's for". */
+  note?: string | null;
 }
 
 export interface PublishResponse {
@@ -172,6 +174,8 @@ export interface GalleryCardDto {
   license: License;
   /** Set when this artifact is a remix; null otherwise. */
   remixedFrom: RemixLineageDto | null;
+  /** The creator's own short note, or null. */
+  note: string | null;
 }
 /** Displayed remix lineage on a card. title/handle null if the parent is gone. */
 export interface RemixLineageDto {
@@ -240,11 +244,23 @@ export interface ArtifactMetaResponse {
   createdAt: number;
   license: License;
   handle: string;
+  note: string | null;
   sourceUrl: string;
 }
 export async function getArtifactMeta(id: string): Promise<ArtifactMetaResponse> {
   const resp = await fetch(`${base()}/a/${id}`);
   return (await readOk(resp)) as ArtifactMetaResponse;
+}
+
+/** Owner-only: set/clear an artifact's creator note after publish. Returns the saved note. */
+export async function setArtifactNote(token: string, id: string, note: string | null): Promise<string | null> {
+  const resp = await fetch(`${base()}/a/${id}/note`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+  const body = (await readOk(resp)) as { note: string | null };
+  return body.note;
 }
 
 /**
