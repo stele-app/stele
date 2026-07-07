@@ -74,6 +74,11 @@
   "plugins": {
     "sql": {
       "preload": ["sqlite:stele.db"]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["stele"]
+      }
     }
   }
 }
