@@ -24,19 +24,24 @@ const LICENSES: Array<{ value: License; label: string; hint: string }> = [
   { value: 'nd', label: "Look, don't remix", hint: 'No derivatives — the Remix button is hidden.' },
 ];
 
+/** Matches the manifest field cap in arcade-core, so nothing is silently trimmed later. */
+const MAX_TITLE = 200;
+
 export function PublishDialog({
-  artifactTitle,
+  defaultTitle,
   busy,
   error,
   onSubmit,
   onClose,
 }: {
-  artifactTitle: string;
+  /** Best guess at a name, pre-filled. Empty when there's nothing to guess from. */
+  defaultTitle: string;
   busy: boolean;
   error: string | null;
-  onSubmit: (options: PublishOptions) => void;
+  onSubmit: (title: string, options: PublishOptions) => void;
   onClose: () => void;
 }) {
+  const [title, setTitle] = useState(defaultTitle);
   const [category, setCategory] = useState<Category | null>(null);
   const [license, setLicense] = useState<License>('mit');
   const [creatorNote, setCreatorNote] = useState('');
@@ -48,8 +53,14 @@ export function PublishDialog({
   );
   const [note, setNote] = useState('');
 
-  const submit = () =>
-    onSubmit({
+  // The title is baked into the artifact's own manifest at publish, so an empty
+  // one would name the file after nothing, permanently. Required, not defaulted.
+  const cleanTitle = title.trim();
+  const canSubmit = !busy && cleanTitle.length > 0;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    onSubmit(cleanTitle, {
       category,
       license,
       note: creatorNote.trim() || null,
@@ -57,6 +68,7 @@ export function PublishDialog({
         ? { remixedFrom: pending.sourceId, remixCredit: credit.trim() || null, remixNote: note.trim() || null }
         : {}),
     });
+  };
 
   const input: React.CSSProperties = {
     padding: '7px 10px', borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg,
@@ -84,9 +96,23 @@ export function PublishDialog({
       >
         <h2 style={{ fontFamily: T.fontSerif, fontSize: 22, fontWeight: 500, margin: 0 }}>Publish to the gallery</h2>
         <p style={{ fontSize: 13.5, color: T.textMuted, margin: '6px 0 18px', lineHeight: 1.5 }}>
-          Publishing <strong style={{ color: T.text }}>{artifactTitle}</strong> publicly — anyone can find and open it
-          in the gallery. This is permanent.
+          Publishing <strong style={{ color: T.text }}>{cleanTitle || 'this artifact'}</strong> publicly — anyone can
+          find and open it in the gallery. This is permanent.
         </p>
+
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6 }}>Title</div>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value.slice(0, MAX_TITLE))}
+          placeholder="e.g. Battleship — Plotting Room"
+          aria-label="Artifact title"
+          autoFocus
+          style={{ ...input, marginBottom: 5 }}
+        />
+        <div style={{ fontSize: 11.5, color: T.textFaint, marginBottom: 20, lineHeight: 1.45 }}>
+          Saved into the artifact itself — this is its name in your library, in the gallery, and in the link preview
+          when someone shares it.
+        </div>
 
         <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6 }}>
           Note <span style={{ fontWeight: 400, color: T.textFaint }}>(optional)</span>
@@ -191,10 +217,13 @@ export function PublishDialog({
           </button>
           <button
             onClick={submit}
-            disabled={busy}
+            disabled={!canSubmit}
+            title={cleanTitle ? undefined : 'Give the artifact a title first.'}
             style={{
-              padding: '8px 18px', borderRadius: 8, border: 'none', background: T.accent, color: 'white',
-              fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer', fontFamily: T.fontSans,
+              padding: '8px 18px', borderRadius: 8, border: 'none',
+              background: canSubmit ? T.accent : T.borderStrong, color: 'white',
+              fontSize: 13, fontWeight: 600, fontFamily: T.fontSans,
+              cursor: busy ? 'wait' : canSubmit ? 'pointer' : 'not-allowed',
             }}
           >
             {busy ? 'Publishing…' : 'Publish'}

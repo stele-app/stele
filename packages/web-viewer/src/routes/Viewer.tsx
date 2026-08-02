@@ -32,8 +32,9 @@ import { mirrorUp } from '../librarySync';
 import { useAuth, getStoredToken } from '../auth';
 import { shareArtifact, publishToGallery, type PublishOptions } from '../share';
 import { PublishDialog } from '../components/PublishDialog';
-import { ARCADE_API_URL, arcadeArtifactId, getArtifactMeta, reportArtifact, setArtifactNote, type ArtifactMetaResponse } from '../arcade';
+import { ARCADE_API_URL, arcadeArtifactId, reportArtifact, setArtifactNote } from '../arcade';
 import { setPendingRemix, clearPendingRemix } from '../remix';
+import { useArtifactMeta } from '../useArtifactMeta';
 import PermissionDialog from '../components/PermissionDialog';
 
 type FetchErrReason = 'http' | 'network' | 'proxy';
@@ -117,7 +118,12 @@ function detectKind(url: string, contentType: string | null, localFilename?: str
   // extension is intentionally generic and may wrap HTML/JSX/etc., so we
   // can't trust the URL ext alone — published artifacts at /p/<id>.stele
   // can carry any supported shape.
-  if (contentType?.includes('html')) return 'html';
+  //
+  // SVG joins HTML on the document branch: it's author-controlled markup to be
+  // rendered as-is, not compiled. Sending it to the JSX loader instead is what
+  // made every published SVG fail with a transform error. injectCspMeta wraps a
+  // rootless fragment in a document, so an SVG still gets the same CSP gating.
+  if (contentType?.includes('html') || contentType?.includes('svg')) return 'html';
   // For local: artifacts the URL is just a synthetic id, so the filename has
   // the real extension we should detect from.
   const source = localFilename ?? url;
@@ -128,7 +134,7 @@ function detectKind(url: string, contentType: string | null, localFilename?: str
   // on a type annotation. Only an explicit `.jsx` stays jsx.
   if (ext === 'tsx' || ext === 'stele') return 'tsx';
   if (ext === 'jsx') return 'jsx';
-  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'html' || ext === 'htm' || ext === 'svg') return 'html';
   return 'tsx';
 }
 
@@ -140,6 +146,12 @@ function hashToken(): string | null {
 
 function hostOf(url: string): string {
   try { return new URL(url).host; } catch { return url; }
+}
+
+/** 'battleship.stele' → 'battleship'. Leaves extension-less names alone. */
+function stripExt(filename?: string): string | undefined {
+  if (!filename) return undefined;
+  return filename.replace(/\.[^./\\]+$/, '') || filename;
 }
 
 function filenameFromUrl(url: string): string {
@@ -155,6 +167,10 @@ function filenameFromUrl(url: string): string {
 export default function Viewer() {
   const [params] = useSearchParams();
   const src = params.get('src');
+
+  // Arcade's record for this artifact (title, @handle, license) when it's a
+  // published one. Cached per id, so the header's remix controls reuse it.
+  const { meta: arcadeMeta, resolved: metaResolved } = useArtifactMeta(src);
 
   const [fetchState, setFetchState] = useState<FetchState>({ kind: 'idle' });
   const [status, setStatus] = useState<BridgeStatus | 'transforming' | 'idle'>('idle');
@@ -308,9 +324,14 @@ export default function Viewer() {
   // still works without persistence.
   useEffect(() => {
     if (!src || fetchState.kind !== 'ok' || parseErr) return;
-    // For local: artifacts the URL is a synthetic id — fall back to the
-    // captured filename when the manifest doesn't supply a name.
-    const title = manifest?.name || fetchState.localFilename || filenameFromUrl(src);
+    // Hold off while an Arcade lookup is in flight, so the entry isn't written
+    // once under a filename and again under its real title.
+    if (!metaResolved) return;
+    // Naming, best first: the file's own manifest, then the title Arcade has
+    // on record (covers everything published before the title was baked into
+    // the source), then — for local: artifacts, whose src is a synthetic id —
+    // the captured filename, and finally the URL's last path segment.
+    const title = manifest?.name || arcadeMeta?.title || fetchState.localFilename || filenameFromUrl(src);
     const entry = {
       src,
       title,
@@ -320,7 +341,7 @@ export default function Viewer() {
     libraryUpsert(entry).catch(() => {/* IDB unavailable — skip */});
     // Mirror up to Arcade if signed in — best-effort, no-op otherwise.
     mirrorUp(entry).catch(() => {/* offline / signed out — skip */});
-  }, [src, fetchState, manifest, parseErr]);
+  }, [src, fetchState, manifest, parseErr, arcadeMeta, metaResolved]);
 
   // Attach bridge to the iframe.
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -362,6 +383,7 @@ export default function Viewer() {
       <Header
         src={src}
         manifest={manifest}
+        localFilename={fetchState.kind === 'ok' ? fetchState.localFilename : undefined}
         parseErr={parseErr}
         status={fetchState.kind === 'loading' ? 'fetching' : status}
         viaProxy={fetchState.kind === 'ok' && fetchState.viaProxy}
@@ -450,9 +472,11 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Header({ src, manifest, parseErr, status, viaProxy }: {
+function Header({ src, manifest, localFilename, parseErr, status, viaProxy }: {
   src: string;
   manifest: Manifest | null;
+  /** Original filename, for local: artifacts — the only name they have. */
+  localFilename?: string;
   parseErr: string | null;
   status: string;
   viaProxy: boolean;
@@ -467,20 +491,22 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
   const reportId = arcadeArtifactId(src); // reportable only if it's an Arcade artifact
   const [reported, setReported] = useState(false);
   // Remix is offered on published Arcade artifacts whose license allows it.
-  const [remixMeta, setRemixMeta] = useState<ArtifactMetaResponse | null>(null);
+  // Shares the viewer's cached lookup, so the header costs no extra request.
+  const { meta: remixMeta, update: updateArtifactMeta } = useArtifactMeta(src);
   const [remixCopied, setRemixCopied] = useState(false);
 
-  useEffect(() => {
-    if (!reportId) {
-      setRemixMeta(null);
-      return;
-    }
-    let cancelled = false;
-    getArtifactMeta(reportId)
-      .then((m) => { if (!cancelled) setRemixMeta(m); })
-      .catch(() => { if (!cancelled) setRemixMeta(null); });
-    return () => { cancelled = true; };
-  }, [reportId]);
+  // Same naming ladder the library entry uses: the file's own manifest, then
+  // Arcade's record, then the dropped file's name, then the host.
+  const displayName = manifest?.name || remixMeta?.title || stripExt(localFilename) || hostOf(src);
+
+  // What the publish dialog pre-fills. A dropped file's own name is a good
+  // guess; a placeholder is not, so we'd rather offer nothing and let the
+  // dialog insist on a real title — publish bakes it into the artifact's
+  // manifest, where it sticks for the life of the file.
+  const derivedTitle = manifest?.name || stripExt(localFilename) || '';
+
+  // Share is one click with no form, so it still needs a fallback of its own.
+  const shareTitle = derivedTitle || 'Stele artifact';
 
   const handleRemix = async () => {
     if (!remixMeta) return;
@@ -514,7 +540,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     if (next === null) return; // cancelled
     try {
       const saved = await setArtifactNote(token, remixMeta.id, next.trim() || null);
-      setRemixMeta({ ...remixMeta, note: saved });
+      updateArtifactMeta({ ...remixMeta, note: saved });
     } catch {
       /* ignore */
     }
@@ -527,7 +553,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     if (shareState === 'publishing') return;
     setShareError(null);
     if (isLocal) setShareState('publishing');
-    const result = await shareArtifact(src, manifest?.name || 'Stele artifact');
+    const result = await shareArtifact(src, shareTitle);
     if (result.kind === 'missing-local') {
       setShareError("This artifact's source isn't in this browser anymore. Drop the file in to re-open it.");
       setShareState('failed');
@@ -553,11 +579,11 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     }
   };
 
-  const handlePublishPublic = async (options: PublishOptions) => {
+  const handlePublishPublic = async (title: string, options: PublishOptions) => {
     if (galleryState === 'publishing') return;
     setGalleryError(null);
     setGalleryState('publishing');
-    const result = await publishToGallery(src, manifest?.name || 'Stele artifact', options);
+    const result = await publishToGallery(src, title, options);
     if (result.kind === 'published') {
       clearPendingRemix(); // consumed — never let it attach to a later publish
       setShowPublish(false);
@@ -600,7 +626,7 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
     }}>
       {showPublish && (
         <PublishDialog
-          artifactTitle={manifest?.name || 'this artifact'}
+          defaultTitle={derivedTitle}
           busy={galleryState === 'publishing'}
           error={galleryState === 'failed' ? galleryError : null}
           onSubmit={handlePublishPublic}
@@ -621,10 +647,10 @@ function Header({ src, manifest, parseErr, status, viaProxy }: {
           textDecoration: 'none',
         }}>Back</Link>
         <span
-          title={manifest?.name || hostOf(src)}
+          title={displayName}
           style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
-          {manifest?.name || hostOf(src)}
+          {displayName}
         </span>
         {manifest && <ArchetypeBadge manifest={manifest} />}
         {parseErr && (

@@ -6,6 +6,27 @@
     <title>Stele — browser for interactive files</title>
     <meta name="description" content="Open .stele artifacts in a sandboxed runtime." />
     <meta name="theme-color" content="#ffffff" />
+
+    <!--
+      Site-wide link preview. This is a client-rendered SPA, so these tags are
+      all a crawler ever sees for any route it reaches — nothing set at runtime
+      reaches an unfurler. They deliberately describe the PRODUCT, because the
+      pages they cover (landing, gallery, examples) are the product.
+
+      Shared artifacts do not rely on these: /a/:id is rewritten to the Arcade
+      Worker, which serves a card carrying that artifact's own title, creator
+      and poster. See packages/arcade-api/src/share-page.ts in stele-arcade.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Stele" />
+    <meta property="og:title" content="Stele — browser for interactive files" />
+    <meta property="og:description" content="Open interactive artifacts in a sandboxed runtime. Nothing to install." />
+    <meta property="og:url" content="https://stele.au/" />
+    <meta property="og:image" content="https://stele.au/icon-256.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Stele — browser for interactive files" />
+    <meta name="twitter:description" content="Open interactive artifacts in a sandboxed runtime. Nothing to install." />
+    <meta name="twitter:image" content="https://stele.au/icon-256.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="128x128" href="/icon-128.png" />
     <link rel="apple-touch-icon" sizes="256x256" href="/icon-256.png" />
