@@ -15,6 +15,7 @@ import Account from './routes/Account';
 import Gallery from './routes/Gallery';
 import Profile from './routes/Profile';
 import Policy from './routes/Policy';
+import ShortLink from './routes/ShortLink';
 import DropToOpen from './components/DropToOpen';
 import FileHandler from './components/FileHandler';
 import { AuthProvider } from './auth';
@@ -35,6 +36,7 @@ createRoot(rootEl).render(
           <Route path="/examples" element={<Examples />} />
           <Route path="/use-cases" element={<UseCases />} />
           <Route path="/view" element={<Viewer />} />
+          <Route path="/a/:id" element={<ShortLink />} />
           <Route path="/library" element={<Library />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/pair" element={<Pair />} />

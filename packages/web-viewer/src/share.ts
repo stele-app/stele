@@ -17,6 +17,7 @@ import { publishArtifact, PublishError } from './publish';
 import {
   ARCADE_API_URL,
   ArcadeError,
+  arcadeArtifactId,
   publishArtifact as arcadePublish,
   type Category,
   type License,
@@ -76,7 +77,7 @@ export async function shareArtifact(src: string, title: string): Promise<ShareAr
       } catch { /* malformed manifest — publish as self-contained */ }
       try {
         const pub = await arcadePublish(token, { source: local.source, title, visibility: 'unlisted', archetype });
-        const shareUrl = publicViewerUrl(pub.url);
+        const shareUrl = shortShareUrl(pub.id);
         const outcome = await shareLink(shareUrl, title);
         return { kind: outcome, url: shareUrl };
       } catch (err) {
@@ -105,7 +106,7 @@ export async function shareArtifact(src: string, title: string): Promise<ShareAr
     return { kind: outcome, url: shareUrl, expiresAt: published.expiresAt };
   }
 
-  const shareUrl = publicViewerUrl(src);
+  const shareUrl = bestShareUrl(src);
   const outcome = await shareLink(shareUrl, title);
   return { kind: outcome, url: shareUrl };
 }
@@ -160,7 +161,7 @@ export async function publishToGallery(
       remixNote: options.remixNote ?? null,
       note: options.note ?? null,
     });
-    const viewUrl = publicViewerUrl(pub.url);
+    const viewUrl = shortShareUrl(pub.id);
     try {
       await navigator.clipboard.writeText(viewUrl);
     } catch {
@@ -179,6 +180,29 @@ export async function publishToGallery(
 /** Wrap a raw artifact source URL in a /view?src= link rooted at this origin. */
 function publicViewerUrl(srcUrl: string): string {
   return `${window.location.origin}/view?src=${encodeURIComponent(srcUrl)}`;
+}
+
+/**
+ * The short link for a published Arcade artifact: `<origin>/a/<id>`.
+ *
+ * Preferred over the `/view?src=<encoded>` form for anything with an Arcade id.
+ * It's the link a person can read, it doesn't leak the API's hostname, and in
+ * production it's the path the deploy rewrites to the Worker's share page — so
+ * it's the only form that unfurls with the artifact's own title and poster
+ * instead of Stele's generic card.
+ */
+function shortShareUrl(id: string): string {
+  return `${window.location.origin}/a/${id}`;
+}
+
+/**
+ * Best public link for an artifact source URL: the short link when it's an
+ * Arcade artifact, else the `/view?src=` form (anonymous 24h publishes and
+ * third-party-hosted files have no id to shorten).
+ */
+function bestShareUrl(srcUrl: string): string {
+  const id = arcadeArtifactId(srcUrl);
+  return id ? shortShareUrl(id) : publicViewerUrl(srcUrl);
 }
 
 /**

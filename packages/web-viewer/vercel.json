@@ -5,6 +5,10 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
+    {
+      "source": "/a/:id([0-9A-Za-z]+)",
+      "destination": "https://arcade-api.unscramble-apiworkersdev.workers.dev/link/:id"
+    },
     { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
   ]
 }
