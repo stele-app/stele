@@ -315,6 +315,46 @@ export async function updateProfile(
   return (await readOk(resp)) as MeResponse;
 }
 
+/**
+ * Change your own handle. Separate endpoint from `updateProfile` because it
+ * fails differently: 409 taken, 429 during the 30-day cooldown, 400 malformed or
+ * reserved. `readOk` surfaces the server's message, which is written for humans.
+ *
+ * The old handle is retired permanently and does NOT redirect — warn the user
+ * before calling this.
+ */
+export async function changeHandle(token: string, handle: string): Promise<MeResponse> {
+  const resp = await fetch(`${base()}/api/me/handle`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ handle }),
+  });
+  return (await readOk(resp)) as MeResponse;
+}
+
+/**
+ * Mirror of the server's handle rules (arcade-core `validateHandle`) so the form
+ * can say what is wrong as you type. The server remains the authority — this
+ * only saves a round trip; it deliberately does not duplicate the reserved-word
+ * list, which lives server-side and would drift.
+ */
+export function handleFormatError(input: string): string | null {
+  const h = input.trim().toLowerCase().replace(/^@/, '');
+  if (!h) return null;
+  if (h.length < 3) return 'At least 3 characters.';
+  if (h.length > 24) return 'At most 24 characters.';
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(h)) {
+    return 'Letters, numbers and hyphens only — cannot start or end with a hyphen.';
+  }
+  if (h.includes('--')) return 'No two hyphens in a row.';
+  return null;
+}
+
+/** Normalise typed input the same way the server will, for the live preview. */
+export function normaliseHandle(input: string): string {
+  return input.trim().toLowerCase().replace(/^@/, '');
+}
+
 // ── Public profiles (Social v1) ──────────────────────────────────────────────
 
 export interface PublicProfileDto {

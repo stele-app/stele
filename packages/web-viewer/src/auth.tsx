@@ -163,7 +163,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const bio = profile?.bio ?? null;
   const links = profile?.links ?? [];
 
-  const applyMe = useCallback((me: MeResponse) => setProfile(me), []);
+  const applyMe = useCallback((me: MeResponse) => {
+    setProfile(me);
+    // A handle change has to write through to the *stored* user, not just the
+    // profile: `user.handle` is what the header and the profile link render, and
+    // it is persisted, so a stale copy would survive until the next sign-in.
+    // Guarded so an ordinary bio/links save doesn't churn storage or fire an event.
+    const stored = getStoredUser();
+    if (stored && (stored.handle !== me.handle || stored.id !== me.id)) {
+      const t = getStoredToken();
+      if (t) writeAuth(t, { id: me.id, handle: me.handle });
+    }
+  }, []);
 
   const value = useMemo<AuthState>(
     () => ({

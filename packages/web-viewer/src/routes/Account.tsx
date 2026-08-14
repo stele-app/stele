@@ -12,7 +12,17 @@ import { Link } from 'react-router-dom';
 import { PublicHeader, PublicFooter, inlineCode } from '../components/PublicChrome';
 import { T } from '../publicTheme';
 import { useAuth } from '../auth';
-import { ARCADE_API_URL, authStartUrl, updateProfile, type MeResponse, type OAuthProvider, type ProfileLink } from '../arcade';
+import {
+  ARCADE_API_URL,
+  authStartUrl,
+  changeHandle,
+  handleFormatError,
+  normaliseHandle,
+  updateProfile,
+  type MeResponse,
+  type OAuthProvider,
+  type ProfileLink,
+} from '../arcade';
 import { syncLibrary } from '../librarySync';
 
 export default function Account() {
@@ -111,7 +121,7 @@ export default function Account() {
                 {providerButton('github', 'Continue with GitHub', false)}
               </div>
               <p style={{ fontSize: 12, color: T.textFaint, marginTop: 16, marginBottom: 0, lineHeight: 1.5 }}>
-                We use your provider only to confirm a verified email — that email is your Arcade identity, so Google and GitHub sign-ins for the same address land in the same account. No posts, no contacts.
+                We use your provider only to confirm a verified email. Your account is tied to the provider you first signed in with, so use the same one each time — Google and GitHub are separate identities even on one address. No posts, no contacts.
               </p>
             </div>
           )}
@@ -153,6 +163,10 @@ export default function Account() {
                 )}
               </div>
             </div>
+          )}
+
+          {configured && signedIn && token && meLoaded && (
+            <HandleEditor token={token} handle={user?.handle ?? ''} onChanged={applyMe} />
           )}
 
           {configured && signedIn && token && meLoaded && (
@@ -215,6 +229,145 @@ export default function Account() {
       </main>
 
       <PublicFooter />
+    </div>
+  );
+}
+
+/**
+ * Change your handle. Collapsed behind a "Change" link because the consequences
+ * are real and one-way-ish: the old handle is retired (nobody else can ever take
+ * it) and `/u/oldhandle` starts 404ing — deliberately, since a redirect would
+ * publicly tie the old identity to the new one. The warning is shown *before*
+ * the field, not as a post-hoc confirm dialog, so it informs the decision rather
+ * than interrupting it.
+ */
+function HandleEditor({
+  token,
+  handle,
+  onChanged,
+}: {
+  token: string;
+  handle: string;
+  onChanged: (me: MeResponse) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [next, setNext] = useState('');
+  const [save, setSave] = useState<{ state: 'idle' | 'saving' | 'error'; msg?: string }>({ state: 'idle' });
+
+  const normalised = normaliseHandle(next);
+  const formatError = handleFormatError(next);
+  const unchanged = normalised === handle.toLowerCase();
+  const submittable = !!normalised && !formatError && !unchanged && save.state !== 'saving';
+
+  const close = () => {
+    setOpen(false);
+    setNext('');
+    setSave({ state: 'idle' });
+  };
+
+  const onSubmit = async () => {
+    setSave({ state: 'saving' });
+    try {
+      const me = await changeHandle(token, normalised);
+      onChanged(me);
+      close();
+    } catch (err) {
+      // The server's wording is written for humans (taken / cooldown / reserved).
+      setSave({ state: 'error', msg: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const input: React.CSSProperties = {
+    padding: '7px 10px', borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg,
+    color: T.text, fontSize: 13, fontFamily: T.fontSans, boxSizing: 'border-box',
+  };
+
+  return (
+    <div style={{ marginTop: 16, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, background: T.bg }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 2 }}>Handle</div>
+          <div style={{ fontSize: 14, color: T.textMuted }}>
+            <strong style={{ color: T.text }}>@{handle}</strong>
+            <span style={{ fontSize: 12.5, color: T.textFaint }}> · stele.au/u/{handle}</span>
+          </div>
+        </div>
+        {!open && (
+          <button
+            onClick={() => setOpen(true)}
+            style={{
+              padding: '7px 14px', borderRadius: 8, border: `1px solid ${T.borderStrong}`,
+              background: T.bg, color: T.text, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: T.fontSans,
+            }}
+          >
+            Change
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ padding: '11px 13px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: 12.5, color: '#92400e', lineHeight: 1.55, marginBottom: 14 }}>
+            Changing your handle retires <strong>@{handle}</strong>. Its profile link stops working and does
+            not redirect — anyone who saved <span style={inlineCode}>/u/{handle}</span> will get a dead link, and
+            your artifacts will show the new name. No one else can ever claim <strong>@{handle}</strong>, and you
+            can take it back yourself later. You can change your handle once every 30 days.
+          </div>
+
+          <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 4 }}>New handle</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 14, color: T.textFaint }}>@</span>
+            <input
+              value={next}
+              onChange={(e) => { setNext(e.target.value); setSave({ state: 'idle' }); }}
+              autoFocus
+              spellCheck={false}
+              autoCapitalize="none"
+              placeholder="your-new-handle"
+              maxLength={32}
+              style={{ ...input, flex: 1, minWidth: 0 }}
+            />
+          </div>
+
+          <div style={{ fontSize: 11.5, marginTop: 6, minHeight: 16, color: formatError ? '#b91c1c' : T.textFaint }}>
+            {formatError
+              ?? (unchanged && normalised ? 'That is already your handle.' : null)
+              ?? (normalised ? `Your profile will be stele.au/u/${normalised}` : '3–24 characters: letters, numbers and hyphens.')}
+          </div>
+
+          {save.state === 'error' && (
+            <div style={{ padding: '10px 12px', borderRadius: 6, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, marginTop: 8, wordBreak: 'break-word' }}>
+              {save.msg}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 16 }}>
+            <button
+              onClick={onSubmit}
+              disabled={!submittable}
+              style={{
+                padding: '8px 16px', borderRadius: 8, border: 'none',
+                background: submittable ? T.accent : T.bgAlt,
+                color: submittable ? 'white' : T.textFaint,
+                fontSize: 13, fontWeight: 600, fontFamily: T.fontSans,
+                cursor: save.state === 'saving' ? 'wait' : submittable ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {save.state === 'saving' ? 'Changing…' : 'Change handle'}
+            </button>
+            <button
+              onClick={close}
+              style={{
+                padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`,
+                background: 'transparent', color: T.textMuted, fontSize: 13, fontWeight: 500,
+                cursor: 'pointer', fontFamily: T.fontSans,
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
