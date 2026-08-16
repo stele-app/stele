@@ -15,6 +15,14 @@
  * DB_VERSION + add an `if (event.oldVersion < N)` block when adding stores.
  * All errors surface as rejected promises — callers decide whether to fall
  * back gracefully (the bridge does for storage; consent flow does too).
+ *
+ * Connection lifecycle: WebKit — in-app browser webviews especially (Messenger,
+ * Instagram) — force-closes IDB connections on backgrounding or memory
+ * pressure. A cached handle then throws InvalidStateError ("the database
+ * connection is closing") on its next transaction, forever. Every entry point
+ * therefore goes through withDb(), which drops the cached connection and
+ * retries once on exactly that error; open() also clears the cache on the
+ * connection's own close/versionchange events.
  */
 
 const DB_NAME = 'stele-web';
@@ -36,7 +44,7 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function open(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  const thisPromise: Promise<IDBDatabase> = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -57,10 +65,46 @@ function open(): Promise<IDBDatabase> {
         db.createObjectStore(STORE_LOCAL, { keyPath: 'id' });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      // The browser closed the connection out from under us (webview
+      // backgrounding, storage pressure) — uncache so the next call reopens.
+      db.onclose = () => {
+        if (dbPromise === thisPromise) dbPromise = null;
+      };
+      // Another tab is upgrading the schema; release our handle promptly.
+      db.onversionchange = () => {
+        db.close();
+        if (dbPromise === thisPromise) dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      if (dbPromise === thisPromise) dbPromise = null;
+      reject(req.error);
+    };
   });
-  return dbPromise;
+  dbPromise = thisPromise;
+  return thisPromise;
+}
+
+/**
+ * Run `fn` against an open connection, reopening and retrying ONCE if the
+ * cached connection was force-closed underneath us. `fn` must start its
+ * transaction inside (every helper here does), so the InvalidStateError from
+ * db.transaction() on a dead handle lands in our catch.
+ */
+async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  const db = await open();
+  try {
+    return await fn(db);
+  } catch (err) {
+    const closed = err instanceof DOMException && err.name === 'InvalidStateError';
+    if (!closed) throw err;
+    dbPromise = null;
+    const fresh = await open();
+    return fn(fresh);
+  }
 }
 
 function promisify<T>(req: IDBRequest<T>): Promise<T> {
@@ -88,45 +132,49 @@ export interface StorageRow {
   value: string;
 }
 
-export async function storageGet(artifactId: string, scope: string, key: string): Promise<string | undefined> {
-  const db = await open();
-  const tx = db.transaction(STORE_STORAGE, 'readonly');
-  const row = await promisify<StorageRow | undefined>(tx.objectStore(STORE_STORAGE).get([artifactId, scope, key]));
-  return row?.value;
+export function storageGet(artifactId: string, scope: string, key: string): Promise<string | undefined> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_STORAGE, 'readonly');
+    const row = await promisify<StorageRow | undefined>(tx.objectStore(STORE_STORAGE).get([artifactId, scope, key]));
+    return row?.value;
+  });
 }
 
-export async function storagePut(artifactId: string, scope: string, key: string, value: string): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_STORAGE, 'readwrite');
-  tx.objectStore(STORE_STORAGE).put({ artifactId, scope, key, value });
-  await txComplete(tx);
+export function storagePut(artifactId: string, scope: string, key: string, value: string): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_STORAGE, 'readwrite');
+    tx.objectStore(STORE_STORAGE).put({ artifactId, scope, key, value });
+    await txComplete(tx);
+  });
 }
 
-export async function storageDelete(artifactId: string, scope: string, key: string): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_STORAGE, 'readwrite');
-  tx.objectStore(STORE_STORAGE).delete([artifactId, scope, key]);
-  await txComplete(tx);
+export function storageDelete(artifactId: string, scope: string, key: string): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_STORAGE, 'readwrite');
+    tx.objectStore(STORE_STORAGE).delete([artifactId, scope, key]);
+    await txComplete(tx);
+  });
 }
 
-export async function storageList(artifactId: string, scope: string, prefix: string): Promise<Array<{ key: string; value: string }>> {
-  const db = await open();
-  const tx = db.transaction(STORE_STORAGE, 'readonly');
-  // Bound the cursor to keys that start with [artifactId, scope, prefix...].
-  const lower = [artifactId, scope, prefix];
-  const upper = [artifactId, scope, prefix + '\uffff'];
-  const range = IDBKeyRange.bound(lower, upper);
-  const out: Array<{ key: string; value: string }> = [];
-  return new Promise((resolve, reject) => {
-    const req = tx.objectStore(STORE_STORAGE).openCursor(range);
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) { resolve(out); return; }
-      const row = cursor.value as StorageRow;
-      out.push({ key: row.key, value: row.value });
-      cursor.continue();
-    };
-    req.onerror = () => reject(req.error);
+export function storageList(artifactId: string, scope: string, prefix: string): Promise<Array<{ key: string; value: string }>> {
+  return withDb((db) => {
+    const tx = db.transaction(STORE_STORAGE, 'readonly');
+    // Bound the cursor to keys that start with [artifactId, scope, prefix...].
+    const lower = [artifactId, scope, prefix];
+    const upper = [artifactId, scope, prefix + String.fromCharCode(0xffff)];
+    const range = IDBKeyRange.bound(lower, upper);
+    const out: Array<{ key: string; value: string }> = [];
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_STORAGE).openCursor(range);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) { resolve(out); return; }
+        const row = cursor.value as StorageRow;
+        out.push({ key: row.key, value: row.value });
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
   });
 }
 
@@ -138,66 +186,71 @@ export interface PermissionRow {
   grantedAt: number;
 }
 
-export async function permissionsGet(artifactId: string): Promise<Set<string>> {
-  const db = await open();
-  const tx = db.transaction(STORE_PERMISSIONS, 'readonly');
-  const range = IDBKeyRange.bound([artifactId], [artifactId, '\uffff']);
-  const out = new Set<string>();
-  return new Promise((resolve, reject) => {
-    const req = tx.objectStore(STORE_PERMISSIONS).openCursor(range);
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) { resolve(out); return; }
-      const row = cursor.value as PermissionRow;
-      out.add(row.capability);
-      cursor.continue();
-    };
-    req.onerror = () => reject(req.error);
+export function permissionsGet(artifactId: string): Promise<Set<string>> {
+  return withDb((db) => {
+    const tx = db.transaction(STORE_PERMISSIONS, 'readonly');
+    const range = IDBKeyRange.bound([artifactId], [artifactId, String.fromCharCode(0xffff)]);
+    const out = new Set<string>();
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_PERMISSIONS).openCursor(range);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) { resolve(out); return; }
+        const row = cursor.value as PermissionRow;
+        out.add(row.capability);
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
   });
 }
 
-export async function permissionsAdd(artifactId: string, capabilities: string[]): Promise<void> {
-  if (capabilities.length === 0) return;
-  const db = await open();
-  const tx = db.transaction(STORE_PERMISSIONS, 'readwrite');
-  const store = tx.objectStore(STORE_PERMISSIONS);
-  const now = Date.now();
-  for (const c of capabilities) {
-    store.put({ artifactId, capability: c, grantedAt: now });
-  }
-  await txComplete(tx);
+export function permissionsAdd(artifactId: string, capabilities: string[]): Promise<void> {
+  if (capabilities.length === 0) return Promise.resolve();
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_PERMISSIONS, 'readwrite');
+    const store = tx.objectStore(STORE_PERMISSIONS);
+    const now = Date.now();
+    for (const c of capabilities) {
+      store.put({ artifactId, capability: c, grantedAt: now });
+    }
+    await txComplete(tx);
+  });
 }
 
 /** Every (artifactId, capability) row across the whole DB — used by the Settings page. */
-export async function permissionsListAll(): Promise<PermissionRow[]> {
-  const db = await open();
-  const tx = db.transaction(STORE_PERMISSIONS, 'readonly');
-  const out: PermissionRow[] = [];
-  return new Promise((resolve, reject) => {
-    const req = tx.objectStore(STORE_PERMISSIONS).openCursor();
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) { resolve(out); return; }
-      out.push(cursor.value as PermissionRow);
-      cursor.continue();
-    };
-    req.onerror = () => reject(req.error);
+export function permissionsListAll(): Promise<PermissionRow[]> {
+  return withDb((db) => {
+    const tx = db.transaction(STORE_PERMISSIONS, 'readonly');
+    const out: PermissionRow[] = [];
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_PERMISSIONS).openCursor();
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) { resolve(out); return; }
+        out.push(cursor.value as PermissionRow);
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
   });
 }
 
-export async function permissionsRevoke(artifactId: string, capability: string): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_PERMISSIONS, 'readwrite');
-  tx.objectStore(STORE_PERMISSIONS).delete([artifactId, capability]);
-  await txComplete(tx);
+export function permissionsRevoke(artifactId: string, capability: string): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_PERMISSIONS, 'readwrite');
+    tx.objectStore(STORE_PERMISSIONS).delete([artifactId, capability]);
+    await txComplete(tx);
+  });
 }
 
 /** Wipe a single object store. Used by "Clear library / storage / permissions" in Settings. */
-async function clearStore(name: string): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(name, 'readwrite');
-  tx.objectStore(name).clear();
-  await txComplete(tx);
+function clearStore(name: string): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(name, 'readwrite');
+    tx.objectStore(name).clear();
+    await txComplete(tx);
+  });
 }
 
 /** Clear the library AND any locally-stored artifact source it referenced. */
@@ -227,19 +280,20 @@ export interface LibraryEntry {
  * Insert or update a library entry. Bumps lastOpenedAt + openCount on each
  * call; `addedAt` is preserved on existing rows.
  */
-export async function libraryUpsert(partial: Omit<LibraryEntry, 'addedAt' | 'lastOpenedAt' | 'openCount'>): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
-  const store = tx.objectStore(STORE_LIBRARY);
-  const existing = await promisify<LibraryEntry | undefined>(store.get(partial.src));
-  const now = Date.now();
-  store.put({
-    ...partial,
-    addedAt: existing?.addedAt ?? now,
-    lastOpenedAt: now,
-    openCount: (existing?.openCount ?? 0) + 1,
-  } satisfies LibraryEntry);
-  await txComplete(tx);
+export function libraryUpsert(partial: Omit<LibraryEntry, 'addedAt' | 'lastOpenedAt' | 'openCount'>): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_LIBRARY, 'readwrite');
+    const store = tx.objectStore(STORE_LIBRARY);
+    const existing = await promisify<LibraryEntry | undefined>(store.get(partial.src));
+    const now = Date.now();
+    store.put({
+      ...partial,
+      addedAt: existing?.addedAt ?? now,
+      lastOpenedAt: now,
+      openCount: (existing?.openCount ?? 0) + 1,
+    } satisfies LibraryEntry);
+    await txComplete(tx);
+  });
 }
 
 /**
@@ -247,45 +301,48 @@ export async function libraryUpsert(partial: Omit<LibraryEntry, 'addedAt' | 'las
  * sync to land a remote entry while preserving its addedAt / lastOpenedAt /
  * openCount (unlike libraryUpsert, which is for a fresh local open).
  */
-export async function libraryPutRaw(entry: LibraryEntry): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
-  tx.objectStore(STORE_LIBRARY).put(entry);
-  await txComplete(tx);
-}
-
-/** All library entries, most-recently-opened first. */
-export async function libraryList(): Promise<LibraryEntry[]> {
-  const db = await open();
-  const tx = db.transaction(STORE_LIBRARY, 'readonly');
-  const out: LibraryEntry[] = [];
-  return new Promise((resolve, reject) => {
-    const req = tx.objectStore(STORE_LIBRARY).index('lastOpenedAt').openCursor(null, 'prev');
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (!cursor) { resolve(out); return; }
-      out.push(cursor.value as LibraryEntry);
-      cursor.continue();
-    };
-    req.onerror = () => reject(req.error);
+export function libraryPutRaw(entry: LibraryEntry): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_LIBRARY, 'readwrite');
+    tx.objectStore(STORE_LIBRARY).put(entry);
+    await txComplete(tx);
   });
 }
 
-export async function libraryDelete(src: string): Promise<void> {
-  const db = await open();
-  // If the entry is a local artifact, drop its source content too so it
-  // doesn't linger in IDB once the library reference is gone.
-  if (src.startsWith(LOCAL_SCHEME)) {
-    const id = src.slice(LOCAL_SCHEME.length);
-    const tx = db.transaction([STORE_LIBRARY, STORE_LOCAL], 'readwrite');
+/** All library entries, most-recently-opened first. */
+export function libraryList(): Promise<LibraryEntry[]> {
+  return withDb((db) => {
+    const tx = db.transaction(STORE_LIBRARY, 'readonly');
+    const out: LibraryEntry[] = [];
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_LIBRARY).index('lastOpenedAt').openCursor(null, 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) { resolve(out); return; }
+        out.push(cursor.value as LibraryEntry);
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  });
+}
+
+export function libraryDelete(src: string): Promise<void> {
+  return withDb(async (db) => {
+    // If the entry is a local artifact, drop its source content too so it
+    // doesn't linger in IDB once the library reference is gone.
+    if (src.startsWith(LOCAL_SCHEME)) {
+      const id = src.slice(LOCAL_SCHEME.length);
+      const tx = db.transaction([STORE_LIBRARY, STORE_LOCAL], 'readwrite');
+      tx.objectStore(STORE_LIBRARY).delete(src);
+      tx.objectStore(STORE_LOCAL).delete(id);
+      await txComplete(tx);
+      return;
+    }
+    const tx = db.transaction(STORE_LIBRARY, 'readwrite');
     tx.objectStore(STORE_LIBRARY).delete(src);
-    tx.objectStore(STORE_LOCAL).delete(id);
     await txComplete(tx);
-    return;
-  }
-  const tx = db.transaction(STORE_LIBRARY, 'readwrite');
-  tx.objectStore(STORE_LIBRARY).delete(src);
-  await txComplete(tx);
+  });
 }
 
 // ── Local artifacts ───────────────────────────────────────────────────
@@ -297,15 +354,17 @@ export interface LocalArtifact {
   createdAt: number;
 }
 
-export async function localArtifactPut(entry: Omit<LocalArtifact, 'createdAt'>): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(STORE_LOCAL, 'readwrite');
-  tx.objectStore(STORE_LOCAL).put({ ...entry, createdAt: Date.now() } satisfies LocalArtifact);
-  await txComplete(tx);
+export function localArtifactPut(entry: Omit<LocalArtifact, 'createdAt'>): Promise<void> {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_LOCAL, 'readwrite');
+    tx.objectStore(STORE_LOCAL).put({ ...entry, createdAt: Date.now() } satisfies LocalArtifact);
+    await txComplete(tx);
+  });
 }
 
-export async function localArtifactGet(id: string): Promise<LocalArtifact | undefined> {
-  const db = await open();
-  const tx = db.transaction(STORE_LOCAL, 'readonly');
-  return promisify<LocalArtifact | undefined>(tx.objectStore(STORE_LOCAL).get(id));
+export function localArtifactGet(id: string): Promise<LocalArtifact | undefined> {
+  return withDb((db) => {
+    const tx = db.transaction(STORE_LOCAL, 'readonly');
+    return promisify<LocalArtifact | undefined>(tx.objectStore(STORE_LOCAL).get(id));
+  });
 }
