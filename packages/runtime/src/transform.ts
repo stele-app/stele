@@ -173,7 +173,29 @@ function wrapWithMount(code: string): string {
     try {
       var root = window.ReactDOM.createRoot(document.getElementById('root'));
       root.render(window.React.createElement(Component));
-      window.parent.postMessage({ kind: 'mounted' }, '*');
+      // Paint-verified status: 'mounted' only after two animation frames —
+      // i.e. the compositor actually produced a frame containing the artifact.
+      // A sandbox can build its whole DOM and still never composite (seen on
+      // cold loads while the Tailwind runtime was still network-fetched);
+      // reporting that as success hid the failure. rAF never fires in a
+      // never-composited document, so its absence IS the detector: after 2s
+      // without a frame we post 'no-paint' and the host can recover.
+      // Hidden documents throttle rAF entirely — there we keep the old
+      // semantics rather than false-alarm, and the rAF still confirms the
+      // paint whenever the document becomes visible.
+      var painted = false;
+      var post = function(kind) { window.parent.postMessage({ kind: kind }, '*'); };
+      requestAnimationFrame(function() { requestAnimationFrame(function() {
+        painted = true;
+        post('mounted');
+      }); });
+      if (document.hidden) {
+        post('mounted');
+      } else {
+        setTimeout(function() {
+          if (!painted && !document.hidden) post('no-paint');
+        }, 2000);
+      }
     } catch(err) {
       window.parent.postMessage({ kind: 'error', message: String(err) }, '*');
     }

@@ -243,6 +243,20 @@ async function main() {
   console.log(`  jsx-runtime shim → window._jsx_runtime`);
   console.log(`    ✓ react-jsx-runtime.umd.js (${(jsxShim.length / 1024).toFixed(1)}KB)`);
 
+  // Static vendored assets — committed files copied verbatim (not built from
+  // vendor-src/node_modules). tailwind-play.js is the pinned Play CDN runtime;
+  // it is inlined into the sandbox srcdoc so artifacts never fetch it from the
+  // network (see the provenance banner in the file itself).
+  const STATIC_DIR = join(ROOT, 'vendor-src', 'static');
+  const STATICS: Record<string, string> = {
+    'tailwind-play.js': 'tailwind-play.umd.js',
+  };
+  for (const [source, filename] of Object.entries(STATICS)) {
+    const code = readFileSync(join(STATIC_DIR, source), 'utf-8');
+    writeVendorFile(filename, code);
+    console.log(`  static ${source} → ${filename} (${(code.length / 1024).toFixed(1)}KB)`);
+  }
+
   // Copy esbuild.wasm to each app's public/.
   console.log('\nCopying esbuild.wasm…');
   for (const out of WASM_OUTS) {
