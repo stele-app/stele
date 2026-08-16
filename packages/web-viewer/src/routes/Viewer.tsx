@@ -176,6 +176,17 @@ export default function Viewer() {
   const [status, setStatus] = useState<BridgeStatus | 'transforming' | 'idle'>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  // No-paint recovery: the sandbox can report a committed-but-never-composited
+  // tree ('no-paint' from the mount wrapper). Remounting the iframe reliably
+  // recovers, so retry once by re-keying it; a second failure surfaces as an
+  // error instead of looping.
+  const [sandboxAttempt, setSandboxAttempt] = useState(0);
+  const noPaintRetried = useRef(false);
+  useEffect(() => {
+    noPaintRetried.current = false;
+    setSandboxAttempt(0);
+  }, [src]);
+
   // Capability consent state — mirrors desktop Viewer.
   const [grantedCaps, setGrantedCaps] = useState<Set<string>>(new Set());
   const [grantsLoaded, setGrantsLoaded] = useState(false);
@@ -355,6 +366,16 @@ export default function Viewer() {
       {
         onStatusChange: (s) => { setStatus(s); if (s !== 'error') setError(null); },
         onError: (msg) => setError(msg),
+        onNoPaint: () => {
+          if (noPaintRetried.current) {
+            setStatus('error');
+            setError('The artifact rendered but the browser never painted it. Reload the page to try again.');
+            return;
+          }
+          noPaintRetried.current = true;
+          setStatus('loading');
+          setSandboxAttempt((a) => a + 1);
+        },
       },
       {
         serverOrigin: manifest?.archetype === 'client-view' ? manifest.server ?? null : null,
@@ -368,7 +389,7 @@ export default function Viewer() {
       },
     );
     return cleanup;
-  }, [sandboxDoc, artifactId, manifest, token]);
+  }, [sandboxDoc, artifactId, manifest, token, sandboxAttempt]);
 
   if (!src) {
     return (
@@ -422,6 +443,7 @@ export default function Viewer() {
       )}
       {fetchState.kind === 'ok' && !parseErr && !showConsentDialog && sandboxDoc && (
         <iframe
+          key={sandboxAttempt}
           ref={iframeRef}
           sandbox="allow-scripts allow-downloads"
           allow={iframeAllow || undefined}

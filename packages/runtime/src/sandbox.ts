@@ -271,10 +271,15 @@ export interface ArtifactCSPOptions {
   /** Network origins from the manifest that the user has granted. Default: none. */
   grantedNetworkOrigins?: string[];
   /**
-   * Allow the Tailwind Play CDN in script-src/style-src (and its Google Fonts
-   * companions). Only JSX/TSX sandboxes run the in-browser JIT compiler, so
-   * only they need this. HTML and SVG artifacts get a stricter policy with no
-   * external script/style origins at all.
+   * Allow the Google Fonts companions (style-src/font-src) that Tailwind
+   * configs commonly reference. Only JSX/TSX sandboxes run the Tailwind JIT,
+   * so only they need this; HTML and SVG artifacts get a stricter policy with
+   * no external style/font origins at all.
+   *
+   * Historical name: this used to also allow the Play CDN script origin. The
+   * Tailwind runtime is now vendored and inlined into the srcdoc — its async
+   * network arrival raced first-paint on cold loads and could leave a fully
+   * built artifact uncomposited (blank) — so script-src stays closed.
    */
   allowTailwindCdn?: boolean;
 }
@@ -303,16 +308,16 @@ export function buildArtifactCSP(opts: ArtifactCSPOptions = {}): string {
     ? `data: blob: ${grantedNetworkOrigins.join(' ')}`
     : 'data: blob:';
 
-  // The Tailwind Play CDN is the one external script/style origin JSX sandboxes
-  // load. HTML/SVG omit it entirely (allowTailwindCdn === false).
-  const scriptExtra = allowTailwindCdn ? ' https://cdn.tailwindcss.com' : '';
-  const styleExtra = allowTailwindCdn ? ' https://cdn.tailwindcss.com https://fonts.googleapis.com' : '';
+  // No external script origins at all — the Tailwind runtime is inlined into
+  // the srcdoc. Google Fonts stay allowed for JSX sandboxes because Tailwind
+  // configs commonly @import them; HTML/SVG omit them (allowTailwindCdn false).
+  const styleExtra = allowTailwindCdn ? ' https://fonts.googleapis.com' : '';
   const fontExtra = allowTailwindCdn ? ' https://fonts.gstatic.com' : '';
 
   return [
     `default-src 'self' 'unsafe-inline'`,
     // Inline + eval required for transformed artifact code and Tailwind JIT.
-    `script-src 'unsafe-inline' 'unsafe-eval'${scriptExtra}`,
+    `script-src 'unsafe-inline' 'unsafe-eval'`,
     `style-src 'unsafe-inline'${styleExtra}`,
     `img-src * data: blob:`,
     `media-src * data: blob:`,
@@ -372,6 +377,10 @@ export async function buildSandboxDoc(opts: BuildSandboxOptions): Promise<string
   const { transformedCode, artifactSource, grantedNetworkOrigins = [] } = opts;
   const neededFiles = detectVendorImports(artifactSource);
   const vendorHtml = await loadVendorFiles(neededFiles);
+  // Tailwind is inlined, not fetched: the Play CDN script's async arrival
+  // raced first-paint on cold loads and could leave a fully built artifact
+  // uncomposited (blank). Same slot in the document it always had.
+  const tailwindHtml = await loadVendorFiles(['tailwind-play.umd.js']);
   const csp = buildArtifactCSP({ grantedNetworkOrigins, allowTailwindCdn: true });
 
   return `<!DOCTYPE html>
@@ -380,7 +389,7 @@ export async function buildSandboxDoc(opts: BuildSandboxOptions): Promise<string
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.tailwindcss.com"><\/script>
+${tailwindHtml}
 <style>
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
   #root { min-height: 100vh; }

@@ -30,6 +30,13 @@ export type BridgeStatus = 'loading' | 'ready' | 'mounted' | 'error';
 export interface BridgeCallbacks {
   onStatusChange: (status: BridgeStatus) => void;
   onError: (message: string) => void;
+  /**
+   * The sandbox committed its React tree but the compositor never produced a
+   * frame (no rAF within the mount wrapper's window). The artifact is built
+   * but invisible; remounting the iframe reliably recovers. Optional so the
+   * desktop host can adopt it separately.
+   */
+  onNoPaint?: () => void;
 }
 
 export interface BridgeOptions {
@@ -368,6 +375,7 @@ export function attachBridge(
 
     if (msg.kind === 'ready')   { callbacks.onStatusChange('ready'); return; }
     if (msg.kind === 'mounted') { callbacks.onStatusChange('mounted'); return; }
+    if (msg.kind === 'no-paint') { callbacks.onNoPaint?.(); return; }
     if (msg.kind === 'error')   {
       callbacks.onStatusChange('error');
       callbacks.onError(msg.message || 'Unknown error');
