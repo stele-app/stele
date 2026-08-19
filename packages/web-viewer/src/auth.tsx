@@ -119,7 +119,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Load the profile (plan tier + admin flag) whenever the token changes.
+  const applyMe = useCallback((me: MeResponse) => {
+    setProfile(me);
+    // A handle change has to write through to the *stored* user, not just the
+    // profile: `user.handle` is what the header and the profile link render, and
+    // it is persisted, so a stale copy would survive until the next sign-in.
+    // Guarded so an ordinary bio/links save doesn't churn storage or fire an event.
+    const stored = getStoredUser();
+    if (stored && (stored.handle !== me.handle || stored.id !== me.id)) {
+      const t = getStoredToken();
+      if (t) writeAuth(t, { id: me.id, handle: me.handle });
+    }
+  }, []);
+
+  // Load the profile (plan tier + admin flag) whenever the token changes — via
+  // applyMe, so a handle changed on ANOTHER device reconciles the localStorage
+  // identity here on next load. Without this, a rename only propagated to the
+  // device it was made on; every other signed-in device kept rendering the
+  // sign-in-time handle forever.
   useEffect(() => {
     if (!token) {
       setProfile(null);
@@ -127,10 +144,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     getMe(token)
-      .then((p) => { if (!cancelled) setProfile(p); })
+      .then((p) => { if (!cancelled) applyMe(p); })
       .catch(() => { if (!cancelled) setProfile(null); });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, applyMe]);
 
   const applySession = useCallback((t: string, u: ArcadeUser) => {
     writeAuth(t, u);
@@ -162,19 +179,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const avatarUrl = profile?.avatarUrl ?? null;
   const bio = profile?.bio ?? null;
   const links = profile?.links ?? [];
-
-  const applyMe = useCallback((me: MeResponse) => {
-    setProfile(me);
-    // A handle change has to write through to the *stored* user, not just the
-    // profile: `user.handle` is what the header and the profile link render, and
-    // it is persisted, so a stale copy would survive until the next sign-in.
-    // Guarded so an ordinary bio/links save doesn't churn storage or fire an event.
-    const stored = getStoredUser();
-    if (stored && (stored.handle !== me.handle || stored.id !== me.id)) {
-      const t = getStoredToken();
-      if (t) writeAuth(t, { id: me.id, handle: me.handle });
-    }
-  }, []);
 
   const value = useMemo<AuthState>(
     () => ({
